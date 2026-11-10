@@ -1,0 +1,117 @@
+name: Coletar preços
+
+# O código fica neste repositório (público, Actions grátis). Os dados (suas buscas, preços e histórico)
+# ficam num repositório PRIVADO à parte, por padrão "<este-repo>-data", acessado com o segredo
+# DATA_REPO_TOKEN. Os logs daqui são públicos: o scraper roda em modo silencioso (FLIGHTS_QUIET).
+#
+# Roda de hora em hora e coleta só as buscas cuja frequência (every_hours) já venceu.
+# Também pode ser disparado na hora, pelo botão "Buscar agora" do painel ou pela aba Actions.
+on:
+  schedule:
+    - cron: "7 * * * *"
+  workflow_dispatch:
+    inputs:
+      ids:
+        description: "IDs das buscas, separados por vírgula. Vazio = todas as ativas"
+        required: false
+        default: ""
+
+permissions:
+  contents: read
+  actions: write # só para o último passo (manter o agendamento ativo)
+
+# Uma coleta por vez: evita duas execuções gravando o banco ao mesmo tempo.
+concurrency:
+  group: scrape
+  cancel-in-progress: false
+
+jobs:
+  scrape:
+    runs-on: ubuntu-latest
+    timeout-minutes: 45
+    env:
+      DATA_REPO: ${{ vars.DATA_REPO || format('{0}-data', github.repository) }}
+      FLIGHTS_QUIET: "1"
+    steps:
+      - name: Conferir o segredo do repositório de dados
+        env:
+          TOKEN: ${{ secrets.DATA_REPO_TOKEN }}
+        run: |
+          if [ -z "$TOKEN" ]; then
+            echo "Falta o segredo DATA_REPO_TOKEN (Settings > Secrets and variables > Actions)."
+            echo "É um token fine-grained com Contents: Read and write só no repositório de dados. Veja o README."
+            exit 1
+          fi
+
+      - uses: actions/checkout@v4
+
+      - name: Baixar o repositório de dados (privado) em data/
+        uses: actions/checkout@v4
+        with:
+          repository: ${{ env.DATA_REPO }}
+          token: ${{ secrets.DATA_REPO_TOKEN }}
+          path: data
+
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+          cache: pip
+
+      - name: Instalar
+        run: |
+          pip install -e .
+          python -m playwright install --with-deps chromium
+
+      - name: Sincronizar buscas cadastradas no painel
+        run: python -m flights --db data/cloud.db sync-watches data/watches.json
+
+      - name: Coletar
+        id: collect
+        continue-on-error: true
+        env:
+          IDS: ${{ inputs.ids }}
+          EVENT: ${{ github.event_name }}
+        run: |
+          set -eu
+          IDS="$(echo "${IDS:-}" | tr ',' ' ' | xargs)"
+          case "$IDS" in *[!0-9\ ]*) echo "ids inválidos"; exit 1;; esac
+          if [ "$EVENT" = "schedule" ]; then
+            python -m flights --db data/cloud.db run --due --max-offers 30 --detail 15
+          else
+            # disparo manual: ignora a frequência e roda agora (todas ou só as ids informadas)
+            python -m flights --db data/cloud.db run --max-offers 30 --detail 15 $IDS
+          fi
+
+      - name: Gerar dados do painel
+        if: always()
+        run: python -m flights --db data/cloud.db publish --out data
+
+      - name: Salvar resultados no repositório de dados
+        if: always()
+        working-directory: data
+        run: |
+          git config user.name "flights-bot"
+          git config user.email "flights-bot@users.noreply.github.com"
+          git add cloud.db dashboard.json
+          if git diff --cached --quiet; then echo "Nada novo."; exit 0; fi
+          git commit -q -m "coleta $(date -u +%Y-%m-%dT%H:%MZ)"
+          BRANCH="$(git rev-parse --abbrev-ref HEAD)"
+          for i in 1 2 3 4; do
+            git pull -q --rebase -X theirs origin "$BRANCH" && git push -q origin "HEAD:$BRANCH" && exit 0
+            sleep $((i * 3))
+          done
+          exit 1
+
+      - name: Manter o agendamento ativo
+        # O GitHub desativa o cron de repositório público após 60 dias sem atividade. Este passo
+        # reabilita o próprio workflow a cada rodada (não faz nada se já estiver ativo).
+        continue-on-error: true
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: gh api -X PUT "repos/${GITHUB_REPOSITORY}/actions/workflows/scrape.yml/enable"
+
+      - name: Falha na coleta (bloqueio do Google, erro...)
+        if: steps.collect.outcome == 'failure'
+        run: |
+          echo "A coleta falhou. O motivo está no painel (aviso na busca). Para depurar, rode localmente com --debug."
+          exit 1

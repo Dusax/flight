@@ -1,0 +1,86 @@
+{
+ "cards": [
+  {
+   "aria": "From 4701 Brazilian reals. Nonstop flight with LATAM. Operated by Latam Airlines Brasil. Leaves São Paulo/Guarulhos–Governor André Franco Montoro International Airport at 10:40 PM on Sunday, December 20 and arrives at Lisbon Airport at 11:20 AM on Monday, December 21. Total duration 9 hr 40 min.   Select flight",
+   "itinerary": "GRU-LIS-LA-8148-20261220",
+   "section": "Top flights",
+   "co2_g": 431000,
+   "co2_diff_pct": -17,
+   "detail": "Departure\nSun, Dec 20\n431 kg CO2e\n-17% emissions\nSelect flight\nR$4,701\n10:40 PMSão Paulo/Guarulhos–Governor André Franco Montoro International Airport (GRU)\nTravel time: 9 hr 40 minOvernight\n11:20 AM+1Lisbon Airport (LIS)\nLATAMEconomyBoeing 787LA 8148\nPlane and crew by Latam Airlines Brasil\nOften delayed by 30+ min\nAbove average legroom (32 in)\nIn-seat power & USB outlets\nOn-demand video\nEmissions estimate: 431 kg CO2e\nContrail warming potential: Low"
+  },
+  {
+   "aria": "From 4628 Brazilian reals. 1 stop flight with Air Europa. Leaves São Paulo/Guarulhos–Governor André Franco Montoro International Airport at 3:05 PM on Sunday, December 20 and arrives at Lisbon Airport at 6:50 AM on Monday, December 21. Total duration 12 hr 45 min.  Layover (1 of 1) is a 1 hr 20 min layover at Adolfo Suárez Madrid-Barajas Airport in Madrid. Select flight",
+   "itinerary": "GRU-MAD-UX-58-20261220,MAD-LIS-UX-1159-20261221",
+   "section": "Other flights",
+   "co2_g": 451000,
+   "co2_diff_pct": -13,
+   "detail": "Departure\nSun, Dec 20\n451 kg CO2e\n-13% emissions\nSelect flight\nR$4,628\n3:05 PMSão Paulo/Guarulhos–Governor André Franco Montoro International Airport (GRU)\nTravel time: 10 hr 5 minOvernight\n5:10 AM+1Adolfo Suárez Madrid-Barajas Airport (MAD)\nAir EuropaEconomyBoeing 787UX 58\nAverage legroom (31 in)\nWi-Fi for a fee\nIn-seat power & USB outlets\nOn-demand video\nEmissions estimate: 390 kg CO2e\nContrail warming potential: Medium\n1 hr 20 min layoverMadrid (MAD)\n6:30 AM+1Adolfo Suárez Madrid-Barajas Airport (MAD)\nTravel time: 1 hr 20 min\n6:50 AM+1Lisbon Airport (LIS)\nAir EuropaEconomyBoeing 737UX 1159\nBelow average legroom (29 in)\nIn-seat USB outlet\nStream media to your device\nEmissions estimate: 61 kg CO2e\nContrail warming potential: Low"
+  },
+  {
+   "aria": "From 3552 Brazilian reals. 2 stops flight with Gol. Operated by Wamos for Gol. Leaves São Paulo/Guarulhos–Governor André Franco Montoro International Airport at 10:10 PM on Sunday, December 20 and arrives at Lisbon Airport at 9:45 PM on Monday, December 21. Total duration 20 hr 35 min.  Layover (1 of 2) is a 6 hr layover at Aeroporto de Vitória - Eurico de Aguiar Salles in Vitoria. Layover (2 of 2) is a 2 hr 15 min layover at RIOgaleão International Airport in Rio de Janeiro. Select flight",
+   "itinerary": "GRU-VIX-G3-1388-20261220,VIX-GIG-G3-1859-20261221,GIG-LIS-G3-7020-20261221",
+   "section": "Top flights",
+   "co2_g": 680000,
+   "co2_diff_pct": 31,
+   "detail": "Departure\nSun, Dec 20\n680 kg CO2e\n+31% emissions\nSelect flight\nR$3,552\n10:10 PMSão Paulo/Guarulhos–Governor André Franco Montoro International Airport (GRU)\nTravel time: 1 hr 30 min\n11:40 PMAeroporto de Vitória - Eurico de Aguiar Salles (VIX)\nGolEconomyBoeing 737MAX 8 PassengerG3 1388\nAverage legroom (30 in)\nWi-Fi for a fee\nIn-seat USB outlet\nStream media to your device\nEmissions estimate: 70 kg CO2e\nContrail warming potential: Medium\n6 hr layoverVitoria (VIX)Long layover\n5:40 AM+1Aeroporto de Vitória - Eurico de Aguiar Salles (VIX)\nTravel time: 1 hr 10 min\n6:50 AM+1RIOgaleão International Airport (GIG)\nGolEconomyBoeing 737G3 1859\nAverage legroom (30 in)\nWi-Fi for a fee\nIn-seat USB outlet\nStream media to your device\nEmissions estimate: 61 kg CO2e\nContrail warming potential: Low\n2 hr 15 min layoverRio de Janeiro (GIG)\n9:05 AM+1RIOgaleão International Airport (GIG)\nTravel time: 9 hr 40 min\n9:45 PM+1Lisbon Airport (LIS)\nGolEconomyAirbus A330G3 7020\nPlane and crew by Wamos for Gol\nAverage legroom (30 in)\nOn-demand video\nEmissions estimate: 549 kg CO2e\nContrail warming potential: Low",
+   "booking": {
+    "url": "https://www.google.com/travel/flights/booking?tfs=CBwQAhqEARIKMjAyNi0xMi0yMCIgCgNHUlUSCjIwMjYtMTItMjAaA1ZJWCoCRzMyBDEzODgiIAoDVklYEgoyMDI2LTEyLTIxGgNHSUcqAkczMgQxODU5IiAKA0dJRxIKMjAyNi0xMi0yMRoDTElTKgJHMzIENzAyMGoHCAESA0dSVXIHCAESA0xJU0ABSAFwAYIBCwj___________8BmAEC&tfu=CoABQ2pSSWVsUjRSVVI0V0RaQ2FuTkJRM2xUUlVGQ1J5MHRMUzB0TFMxNWFXRnFOUzF1TVVGQlFVRkJSM0o2Vkc1blFYRkxaa2xCRWhSSE16RXpPRGg4UnpNeE9EVTVmRWN6TnpBeU1Cb0xDTXZXRlJBQ0dnTkNVa3c0SEhDRzd3TT0SAggAIgA&hl=en&gl=BR&curr=BRL",
+    "bags": [
+     "1 free carry-on",
+     "1st checked bag available for a fee"
+    ],
+    "bag_policy": null,
+    "sellers": [
+     {
+      "seller": "Gol",
+      "type": "Airline",
+      "price": 3552.0,
+      "price_text": "R$3,552",
+      "other_price_text": null,
+      "notes": []
+     }
+    ],
+    "verdict": "typical",
+    "verdict_cabin": "Economy",
+    "typical_low": 2100.0,
+    "typical_high": 4600.0,
+    "unsupported_location": false
+   }
+  }
+ ],
+ "bookings": {
+  "gru_lis": {
+   "text": "Selected flights\nTrack prices\nSun, Dec 20\n10:10 PM\n – \n9:45 PM+1\nGolOperated by Wamos for Gol\n20 hr 35 min\nGRU–LIS\n2 stops\nVIX, GIG\n680 kg CO2e\n+31% emissions\n1 free carry-on\n1st checked bag available for a fee\nBaggage conditions apply to your entire trip. Bag fees may be higher at the airport. Gol bag policy\nBooking options\nBook with GolAirline\nR$3,552\nContinue\nView options\nPrices include required taxes + fees for 1 adult. Optional charges and bag fees may apply.\nPrice insights\nR$3,552 is typical for Economy\nThe least expensive flights for similar trips to Lisbon usually cost between R$2,100–4,600. \nR$3,552 is typical\nR$2,100\nR$4,600\nPrice history for these flights\n23 days ago\n16 days ago\n9 days ago\n2 days ago\nR$7,000\nR$6,000\nR$5,000\nR$4,000\nR$3,000\nLanguage​English (United States)\nLocation​Brazil\nCurrencyBRL\nAbout\nPrivacy\nTerms\nJoin user studies\nReport Il",
+   "rows": [
+    {
+     "seller": "Gol",
+     "tag": "Airline",
+     "text": "Book with GolAirline\nR$3,552\nContinue\nView options"
+    }
+   ],
+   "url": "https://www.google.com/travel/flights/booking?tfs=REDACTED"
+  },
+  "lis_mad": {
+   "text": "Selected flights\nTrack prices\nSun, Dec 27\n9:40 PM\n – \n12:05 AM+1\nRyanair\n1 hr 25 min\nLIS–MAD\nNonstop\n59 kg CO2e\n-13% emissions\n1 carry-on bag: R$79–226\nFirst checked bag costs between 135 Brazilian reals and 376 Brazilian reals\n1st checked bag: R$135–376\nRyanair allows passengers to board with 1 small item, such as a purse or laptop bag. Passengers who pay a fee may also bring 1 carry-on to stow in an overhead bin. The fee for checking your bag is €/£10-18 for bags up to 10 kg, and €/£25 + €/£10 in high season for bags up to 20 kg, for each flight.\nBaggage prices apply to your entire trip. The exact bag fees are unknown. Bag fees may be higher at the airport. Ryanair bag policy\nBooking options\nBook with RyanairAirline\nR$287\n€46\nContinue\nView options\nPrices include required taxes + fees for 1 adult. Optional charges and bag fees may apply.\nPrice insights\nR$287 is typical for Economy\nThe least expensive flights for similar trips to Madrid usually cost between R$140–410. \nR$287 is typical\nR$140\nR$410\nPrice history for these flights\n58 day...\n51 days ago\n44 days ago\n37 days ago\n30 days ago\n23 days ago\n16 days ago\n9 days ago\n2 days ...\nR$350\nR$300\nR$250\nR$200\nR$150\nLanguage​English (United States)\nLocation​Brazil\nCurrencyBRL\nAbout\nPriva",
+   "rows": [
+    {
+     "seller": "Ryanair",
+     "tag": "Airline",
+     "text": "Book with RyanairAirline\nR$287\n€46\nContinue\nView options"
+    }
+   ],
+   "url": "https://www.google.com/travel/flights/booking?tfs=REDACTED"
+  },
+  "mad_gru": {
+   "text": "Selected flights\nTrack prices\nSun, Jan 3\n9:10 PM\n – \n6:50 AM+1\nTap Air PortugalOperated by Portugalia - Companhia Portuguesa\n13 hr 40 min\nMAD–GRU\n1 stop\n1 hr 50 min LIS\n539 kg CO2e\nAvg emissions\n1 free carry-on\nFirst checked bag costs 719 Brazilian reals\n1st checked bag: R$719\nBaggage prices apply to your entire trip. Bag fees may be higher at the airport. Tap Air Portugal bag policy\nBooking options\nBook with Tap Air PortugalAirline\nR$4,619\n€739\nContinue\nView options\nPrices include required taxes + fees for 1 adult. Optional charges and bag fees may apply.\nPrice insights\nR$4,619 is typical for Economy\nThe least expensive flights for similar trips to São Paulo usually cost between R$3,750–5,600. \nR$4,619 is typical\nR$3,750\nR$5,600\nPrice history for these flights\n58 day...\n51 days ago\n44 days ago\n37 days ago\n30 days ago\n23 days ago\n16 days ago\n9 days ago\n2 days ...\nR$6,000\nR$5,500\nR$5,000\nR$4,500\nR$4,000\nLanguage​English (United States)\nLocation​Brazi",
+   "rows": [
+    {
+     "seller": "Tap Air Portugal",
+     "tag": "Airline",
+     "text": "Book with Tap Air PortugalAirline\nR$4,619\n€739\nContinue\nView options"
+    }
+   ],
+   "url": "https://www.google.com/travel/flights/booking?tfs=REDACTED"
+  }
+ }
+}

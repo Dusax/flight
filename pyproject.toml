@@ -1,0 +1,19 @@
+[build-system]
+requires = ["setuptools>=68"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "flights"
+version = "0.1.0"
+description = "Coleta preços de passagens no Google Voos e guarda num banco SQLite local."
+requires-python = ">=3.9"
+dependencies = ["playwright>=1.45"]
+
+[project.scripts]
+flights = "flights.cli:main"
+
+[tool.setuptools]
+packages = ["flights"]
+
+[tool.pytest.ini_options]
+testpaths = ["tests"]

@@ -1,0 +1,35 @@
+{
+ "price_level": "typical",
+ "cards": [
+  {
+   "aria": "From 6138 Brazilian reals round trip total. Nonstop flight with LATAM. Operated by Latam Airlines Brasil. Leaves São Paulo/Guarulhos–Governor André Franco Montoro International Airport at 5:50 PM on Sunday, December 20 and arrives at Lisbon Airport at 6:20 AM on Monday, December 21. Total duration 9 hr 30 min.   Select flight",
+   "itinerary": "GRU-LIS-LA-8146-20261220",
+   "section": "Top departing flights"
+  },
+  {
+   "aria": "From 6594 Brazilian reals round trip total. Nonstop flight with Tap Air Portugal. Leaves São Paulo/Guarulhos–Governor André Franco Montoro International Airport at 1:30 AM on Sunday, December 20 and arrives at Lisbon Airport at 2:30 PM on Sunday, December 20. Total duration 10 hr.   Select flight",
+   "itinerary": "GRU-LIS-TP-84-20261220",
+   "section": "Top departing flights"
+  },
+  {
+   "aria": "From 6226 Brazilian reals round trip total. 1 stop flight with Air Europa. Leaves São Paulo/Guarulhos–Governor André Franco Montoro International Airport at 3:05 PM on Sunday, December 20 and arrives at Lisbon Airport at 6:50 AM on Monday, December 21. Total duration 12 hr 45 min.  Layover (1 of 1) is a 1 hr 20 min layover at Adolfo Suárez Madrid-Barajas Airport in Madrid. Select flight",
+   "itinerary": "GRU-MAD-UX-58-20261220,MAD-LIS-UX-1159-20261221",
+   "section": "Top departing flights"
+  },
+  {
+   "aria": "From 6977 Brazilian reals round trip total. 2 stops flight with Lufthansa. Leaves São Paulo/Guarulhos–Governor André Franco Montoro International Airport at 9:20 PM on Sunday, December 20 and arrives at Lisbon Airport at 10:50 PM on Monday, December 21. Total duration 22 hr 30 min.  Layover (1 of 2) is a 3 hr 15 min layover at Munich International Airport in Munich. Layover (2 of 2) is a 3 hr 40 min layover at Frankfurt Airport in Frankfurt am Main. Select flight",
+   "itinerary": "GRU-MUC-LH-505-20261220,MUC-FRA-LH-111-20261221,FRA-LIS-LH-1172-20261221",
+   "section": "Other departing flights"
+  },
+  {
+   "aria": "Total price is unavailable. 2 stops flight with Avianca and Air Europa. Leaves São Paulo/Guarulhos–Governor André Franco Montoro International Airport at 12:25 AM on Sunday, December 20 and arrives at Lisbon Airport at 6:50 AM on Monday, December 21. Total duration 27 hr 25 min.  Layover (1 of 2) is a 3 hr 25 min layover at El Dorado International Airport in Bogotá. Layover (2 of 2) is a 7 hr 5 min layover at Adolfo Suárez Madrid-Barajas Airport in Madrid. Select flight",
+   "itinerary": "GRU-BOG-AV-248-20261220,BOG-MAD-AV-46-20261220,MAD-LIS-UX-1159-20261221",
+   "section": "Other departing flights"
+  },
+  {
+   "aria": "From 6138 Brazilian reals round trip total. Nonstop flight with LATAM. Operated by Latam Airlines Brasil. Leaves São Paulo/Guarulhos–Governor André Franco Montoro International Airport at 5:50 PM on Sunday, December 20 and arrives at Lisbon Airport at 6:20 AM on Monday, December 21. Total duration 9 hr 30 min.   Select flight",
+   "itinerary": "GRU-LIS-LA-8146-20261220",
+   "section": "Top departing flights"
+  }
+ ]
+}
