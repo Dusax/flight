@@ -61,7 +61,7 @@ nele com um token dedicado.
    com `dono/nome`.)
 3. **Torne o repositório do código público:** *Settings → General → Danger Zone → Change visibility*.
 4. **Vercel:** *Add New → Project → Import* o repositório do código. Não precisa configurar nada: o
-   `vercel.json` já aponta a pasta `docs`, sem build, e commits de dados não geram deploy.
+   `vercel.json` já aponta a pasta `docs` e não há build. (Os dados ficam em outro repositório, então não geram deploys.)
 5. **Token do painel:** outro token *fine-grained*, com os **dois** repositórios, permissões
    **Contents: Read and write** e **Actions: Read and write**.
 6. Abra o painel (`*.vercel.app`) → **⚙ Conexão**: repositório do código (`dono/flight`), repositório
