@@ -26,55 +26,77 @@ frequência de cada uma pelo próprio painel e pode disparar uma coleta na hora.
   site. Para ver os outros trechos, use a comparação por trecho.
 
 ```
- REPOSITÓRIO PÚBLICO  (este: código, workflow, página)        REPOSITÓRIO PRIVADO  (só os seus dados)
- ┌───────────────────────────────────────────────┐             ┌──────────────────────────┐
- │ docs/index.html ──► Vercel (só a página)      │             │ watches.json  (suas buscas)
- │ .github/workflows/scrape.yml (Actions, grátis)│◄── token ──►│ dashboard.json (resultados)
- └───────────────────────────────────────────────┘             │ cloud.db      (histórico)
-        ▲                                                       └──────────────────────────┘
-        │ "Buscar agora" dispara o workflow                              ▲
-        └──────────────── a página lê/grava os dados pela API do GitHub, com o seu token
+ navegador ──(senha → cookie de sessão HttpOnly)──►  Vercel
+                                                      ├─ docs/  a página
+                                                      └─ api/   funções (login, dados, disparar coleta)
+                                                           │  GH_TOKEN: só aqui, nunca no navegador
+                                                           ▼
+ REPOSITÓRIO PÚBLICO  (código, workflow)  ◄──────►  REPOSITÓRIO PRIVADO  (só os seus dados)
+   .github/workflows/scrape.yml (Actions, grátis)       watches.json   suas buscas
+   scraper → grava no repo privado ───────────────────► dashboard.json resultados
+                                                        cloud.db       histórico
 ```
 
-**Por que dois repositórios:** repositório privado consome a cota de minutos do Actions (e a conta
-pode travar por cobrança); repositório público roda de graça. Então o código fica público e os dados
-(o que você pesquisa, preços, histórico) ficam num repositório privado à parte. O Actions lê e grava
-nele com um token dedicado.
+**Por que dois repositórios:** repositório privado consome a cota de minutos do Actions; público
+roda de graça. O código fica público; o que você pesquisa, os preços e o histórico ficam no privado.
 
-**Privacidade, em concreto:**
-- Os dados nunca estão no repositório público nem no site da Vercel (que serve só `docs/`).
-- Os logs do Actions de repositório público são públicos, então o scraper roda em modo
-  silencioso (`FLIGHTS_QUIET=1`): só imprime contagens e status, nunca rota, data, preço nem mensagem de
-  erro (as do Playwright trazem a URL da busca). Não há upload de artefatos de debug.
-- Sem o token, quem abrir o painel não vê nada. O `vercel.json` manda `noindex` e uma CSP que só
-  deixa a página falar com `api.github.com`.
+## Segurança
+
+- **Login por senha.** Sem sessão válida, as funções `/api/*` respondem 401 e nunca chegam ao GitHub.
+  A senha é comparada em tempo constante; depois de 5 erros seguidos o IP é bloqueado por 15 min
+  (freio por instância: a defesa principal é uma senha longa).
+- **O token do GitHub nunca vai para o navegador.** Ele vive na variável `GH_TOKEN` da Vercel. A página
+  só tem um cookie de sessão `HttpOnly` + `SameSite=Strict` (+ `Secure` e prefixo `__Host-` em https),
+  que o JavaScript não consegue ler. A sessão vale 7 dias e é assinada (HMAC); **trocar a senha
+  derruba todas as sessões** (para derrubar sem trocar a senha, mude o `SESSION_SECRET`).
+- **O servidor só faz o que o painel precisa:** ler `dashboard.json`/`watches.json` do repositório de dados,
+  gravar `watches.json` (campos e limites validados) e disparar o workflow do repositório do código. O
+  navegador não escolhe URL nem repositório. Erros do GitHub não são repassados ao navegador.
+- **CSP restrita:** a página só conecta em si mesma (`connect-src 'self'`) e não roda nenhum script
+  embutido (`script-src 'self'`), além de `noindex`, sem frames e sem referrer.
+- **Logs do Actions** (públicos neste modelo) saem em modo silencioso: só contagens e status, nunca rota,
+  data, preço nem mensagem de erro (as do Playwright trazem a URL da busca). Sem artefatos de debug.
 - O que continua visível publicamente: o código, e que o workflow rodou (horários e se deu certo).
 
 ## Configurar (uma vez)
 
-1. **Crie o repositório de dados, PRIVADO e vazio:** *New repository* → nome `flight-data` (padrão:
-   `<este-repo>-data`) → **Private** → marque *Add a README*.
-2. **Token do Actions:** em <https://github.com/settings/personal-access-tokens/new> crie um token
-   *fine-grained* só com o repositório `flight-data` e permissão **Contents: Read and write**. No
-   repositório do código: *Settings → Secrets and variables → Actions → New repository secret* com
-   nome **`DATA_REPO_TOKEN`**. (Se usar outro nome de repo de dados, crie a *variable* `DATA_REPO`
-   com `dono/nome`.)
+1. **Repositório de dados, PRIVADO e vazio:** *New repository* → `flight-data` (padrão: `<este-repo>-data`)
+   → **Private** → *Add a README*.
+2. **Token do Actions (token 1):** em <https://github.com/settings/personal-access-tokens/new>, token
+   *fine-grained* só com o repositório `flight-data` e **Contents: Read and write**. No repositório do código:
+   *Settings → Secrets and variables → Actions → New repository secret* → **`DATA_REPO_TOKEN`**. (Se o repo de
+   dados tiver outro nome, crie a *variable* `DATA_REPO` com `dono/nome`.)
 3. **Torne o repositório do código público:** *Settings → General → Danger Zone → Change visibility*.
-4. **Vercel:** *Add New → Project → Import* o repositório do código. Não precisa configurar nada: o
-   `vercel.json` já aponta a pasta `docs` e não há build. (Os dados ficam em outro repositório, então não geram deploys.)
-5. **Token do painel:** outro token *fine-grained*, com os **dois** repositórios, permissões
-   **Contents: Read and write** e **Actions: Read and write**.
-6. Abra o painel (`*.vercel.app`) → **⚙ Conexão**: repositório do código (`dono/flight`), repositório
-   dos dados (deixe vazio para usar `<código>-data`) e cole o token. Ele fica só no seu navegador
-   (localStorage) e só é enviado para `api.github.com`. O painel recusa um repositório de dados público.
+4. **Vercel:** *Add New → Project → Import* o repositório do código. Não precisa configurar build: o
+   `vercel.json` já aponta `docs/` e as funções ficam em `api/`.
+5. **Token do painel (token 2):** outro token *fine-grained* com os **dois** repositórios e permissões
+   **Contents: Read and write** e **Actions: Read and write**. Ele vai só para a Vercel (próximo passo).
+6. **Variáveis de ambiente** (Vercel → projeto → *Settings → Environment Variables*; marque *Sensitive* nas
+   três primeiras; ambiente *Production*):
 
-Pronto: **+ Nova busca** (origem/destino em código IATA, datas, adultos, classe,
-escalas, datas flexíveis ± N dias e **frequência**: manual, 1 h, 3 h, 6 h, 12 h, todo dia…).
+   | Nome | Valor |
+   |---|---|
+   | `GH_TOKEN` | o token 2 (`github_pat_...`) |
+   | `APP_PASSWORD` | a senha de acesso (**mín. 12 caracteres**; uma frase longa é melhor) |
+   | `SESSION_SECRET` | texto aleatório de **mín. 32 caracteres**, gerado com `openssl rand -base64 48` (ou `node -e "console.log(require('crypto').randomBytes(48).toString('base64'))"`) |
+   | `CODE_REPO` | `dono/flight` |
+   | `DATA_REPO` | `dono/flight-data` (opcional: o padrão é `<CODE_REPO>-data`) |
 
-> O cron do GitHub roda de hora em hora e pode atrasar alguns minutos (menor frequência útil: 1 h).
-> Em repositório público o GitHub desativa o agendamento após 60 dias sem atividade; o workflow tenta
-> evitar isso reabilitando a si mesmo a cada rodada. Se mesmo assim parar, reative em *Actions* (o botão
-> "Buscar agora" continua funcionando).
+7. **Novo deploy** (variáveis só valem em deploys novos): *Deployments → ⋯ → Redeploy*.
+8. Abra o site, entre com a senha e use **+ Nova busca**. Se faltar alguma variável, a página mostra
+   exatamente qual.
+
+> Como o painel tem login próprio, você pode desligar o *Vercel Authentication* (Settings → Deployment
+> Protection) para abrir de qualquer aparelho. Opcional: em *Firewall* da Vercel, crie uma regra de limite de
+> requisições para `/api/login`.
+>
+> O cron do GitHub roda de hora em hora e pode atrasar alguns minutos (menor frequência útil: 1 h). Em repositório
+> público o GitHub desativa o agendamento após 60 dias sem atividade; o workflow tenta evitar isso reabilitando a si
+> mesmo a cada rodada. Se mesmo assim parar, reative em *Actions* (o botão "Buscar agora" continua funcionando).
+
+### Testar o painel sem GitHub
+`node webtests/run-server.mjs` sobe o painel com um GitHub **falso** (senha `senha-de-teste-123`) e `npm test` roda
+os testes das funções (login, sessão, CSRF, validação, vazamento de token). Os testes do coletor: `pytest`.
 
 ## Usar localmente (sem GitHub)
 

@@ -5,3 +5,4 @@ __pycache__/
 *.egg-info/
 # dados locais (banco, debug e exports)
 data/
+node_modules/

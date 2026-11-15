@@ -1,0 +1,9 @@
+{
+  "name": "flights-painel",
+  "private": true,
+  "type": "module",
+  "engines": { "node": "22.x" },
+  "scripts": {
+    "test": "node --test webtests/*.test.mjs"
+  }
+}

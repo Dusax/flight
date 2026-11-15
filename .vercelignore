@@ -1,0 +1,10 @@
+# O painel é só docs/ + api/. O coletor (Python) roda no GitHub Actions, não na Vercel.
+flights/
+tests/
+webtests/
+scripts/
+.github/
+data/
+pyproject.toml
+requirements.txt
+README.md

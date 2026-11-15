@@ -182,3 +182,33 @@ def test_quiet_mode_prints_no_route_price_or_error_text(tmp_path, capsys, monkey
         assert any(leak in (r["error"] or "") for r in db.recent_searches(conn))
     finally:
         cli.QUIET = False
+
+
+def test_watches_written_by_the_panel_server_are_accepted_by_the_collector(tmp_path):
+    """Contrato JS <-> Python: o que api/_lib/validate.js normaliza o sync_watches precisa aceitar."""
+    import shutil
+    import subprocess
+    from pathlib import Path
+    if not shutil.which("node"):
+        import pytest
+        pytest.skip("node não instalado")
+    root = Path(__file__).resolve().parent.parent
+    sample = [
+        {"id": 1, "label": "Lisboa", "origin": "gru", "destination": "lis", "depart_date": "2027-02-10", "return_date": "2027-02-20",
+         "flex_days": 2, "adults": 2, "cabin": "business", "max_stops": 1, "every_hours": 12, "compare_separate": True, "booking_top": 3, "evil": "x"},
+        {"id": 2, "origin": "gig", "destination": "ssa", "depart_date": "2027-04-01"},
+        {"id": 3, "label": "Europa", "origin": "GRU", "destination": "LIS", "depart_date": "2027-03-10", "return_date": None,
+         "legs": [{"origin": "GRU", "destination": "LIS", "date": "2027-03-10"}, {"origin": "lis", "destination": "mad", "date": "2027-03-15"},
+                  {"origin": "MAD", "destination": "GRU", "date": "2027-03-20"}], "every_hours": None, "active": False},
+    ]
+    script = ("import { normalizeWatches } from './api/_lib/validate.js';"
+              "const l = JSON.parse(process.argv[1]); console.log(JSON.stringify(normalizeWatches(l)));")
+    out = subprocess.run(["node", "--input-type=module", "-e", script, json.dumps(sample)], cwd=root, capture_output=True, text=True, check=True)
+    normalized = json.loads(out.stdout)
+    assert normalized[0]["origin"] == "GRU" and "evil" not in normalized[0]
+    conn = db.connect(tmp_path / "c.db")
+    n, warnings = db.sync_watches(conn, normalized)
+    assert (n, warnings) == (3, [])
+    rows = {r["id"]: r for r in db.list_watches(conn)}
+    assert (rows[1]["cabin"], rows[1]["compare_separate"], rows[1]["booking_top"], rows[1]["every_hours"]) == ("business", 1, 3, 12)
+    assert db.watch_to_spec(rows[3]).route() == "GRU→LIS→MAD→GRU" and rows[3]["active"] == 0 and rows[3]["every_hours"] is None
