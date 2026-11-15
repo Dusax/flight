@@ -1,0 +1,171 @@
+"""Teste de navegador do painel (Playwright) contra o servidor local com GitHub FALSO.
+
+    pip install playwright && playwright install chromium
+    python webtests/e2e_panel.py            # (FLIGHTS_CHROMIUM_PATH aponta outro Chromium, se precisar)
+"""
+import os, re, subprocess, sys
+from pathlib import Path
+from playwright.sync_api import sync_playwright
+
+ROOT = Path(__file__).resolve().parent.parent
+PW = "senha-de-teste-123"
+
+
+def start(omit_token=False):
+    env = {**os.environ, **({"OMIT_GH_TOKEN": "1"} if omit_token else {})}
+    args = ["node", str(ROOT / "webtests/run-server.mjs")] + ([] if omit_token else [str(ROOT / "webtests/seed/dashboard.json"), str(ROOT / "webtests/seed/watches.json")])
+    p = subprocess.Popen(args, cwd=ROOT, stdout=subprocess.PIPE, text=True, env=env)
+    return p, p.stdout.readline().strip()
+
+
+def launch(pw):
+    path = os.environ.get("FLIGHTS_CHROMIUM_PATH")
+    return pw.chromium.launch(**({"executable_path": path} if path else {}), args=["--no-sandbox"])
+
+
+procs = []
+try:
+    p, base = start(); procs.append(p)
+    with sync_playwright() as pw:
+        b = launch(pw)
+        ctx = b.new_context(viewport={"width": 1200, "height": 900})
+        pg = ctx.new_page(); errs, reqs = [], []
+        pg.on("pageerror", lambda e: errs.append(str(e)))
+        pg.on("console", lambda m: errs.append("CSP:" + m.text) if "Content Security" in m.text else None)
+        pg.on("request", lambda r: reqs.append(r.url))
+        pg.add_init_script("localStorage.setItem('flights.token','github_pat_VELHO')")
+        pg.goto(base); pg.wait_for_selector("#dlg-login[open]")
+        assert pg.locator(".tcard").count() == 0 and pg.is_disabled("#btn-new")
+        assert pg.evaluate("localStorage.getItem('flights.token')") is None
+        print("1. sem sessão: só o login; dados ocultos; token antigo apagado")
+
+        pg.fill("#form-login [name=password]", "errada-errada-123"); pg.click("#login-go")
+        pg.locator("#login-err").filter(has_text="incorreta").wait_for()
+        pg.fill("#form-login [name=password]", PW); pg.click("#login-go")
+        pg.wait_for_selector(".tcard"); pg.wait_for_selector("#dlg-login:not([open])", state="attached")
+        assert pg.locator(".tcard").count() == 4
+        kpis = pg.inner_text(".kpis"); assert "Viagens monitoradas" in kpis and "Maior queda" in kpis and "Próxima coleta" in kpis
+        ck = [c for c in ctx.cookies() if c["name"] in ("fs", "__Host-fs")]
+        assert len(ck) == 1 and ck[0]["httpOnly"] and ck[0]["sameSite"] == "Strict" and "fs=" not in pg.evaluate("document.cookie")
+        print("2. login ok: 4 cartões e indicadores; cookie HttpOnly/Strict")
+
+        # ---- cartão -> detalhe ----
+        card = pg.locator('.tcard[data-open-trip="3"]')
+        txt = card.inner_text(); assert "GRU" in txt and "GIG" in txt and "R$" in txt and "Rio de Janeiro" in txt
+        card.click(); pg.wait_for_selector(".trip-head")
+        assert pg.evaluate("location.hash") == "#/viagem/3/resumo" and pg.locator(".tab").count() >= 4
+        assert "Mais barata direta" in pg.inner_text("body") and "Viagem mais rápida" in pg.inner_text("body")
+        print("3. cartão abre o detalhe (#/viagem/3/resumo) com abas e estatísticas")
+
+        pg.click('.tab[data-tab="voos"]'); pg.wait_for_selector(".fl")
+        n_all = pg.locator(".fl").count(); assert n_all >= 3
+        first_price = pg.locator(".fl .price").first.inner_text()
+        pg.select_option('[data-flt="sort"]', "duration_min"); pg.wait_for_selector(".fl")
+        pg.check('[data-flt="direct"]'); pg.wait_for_selector(".fl")
+        assert pg.locator(".fl").count() <= n_all
+        assert all("Direto" in t for t in pg.locator(".fl-mid").all_inner_texts())
+        det = pg.locator(".fl details").first; det.locator("summary").click()
+        assert "Compra" in det.inner_text() or "Bagagem" in det.inner_text() or det.inner_text().strip()
+        print("4. voos: ordenar, filtrar só diretos e expandir detalhes funcionam")
+        pg.evaluate("location.hash = '#/viagem/3/historico'"); pg.wait_for_selector("svg.chart"); assert pg.locator("table tbody tr").count() >= 2
+        pg.locator("svg.chart").hover(position={"x": 300, "y": 90}); pg.wait_for_selector(".tip:not([hidden])")
+        print("5. histórico: gráfico com tooltip e tabela de coletas")
+
+        pg.evaluate("location.hash = '#/viagem/2/comparar'"); pg.wait_for_selector(".verdict")
+        assert re.search(r"mais barato", pg.inner_text(".verdict")) and pg.locator("tfoot").count() == 1
+        print("6. comparação pacote × separado:", pg.inner_text(".verdict"))
+        pg.evaluate("location.hash = '#/viagem/4/datas'"); pg.wait_for_selector(".dtile")
+        assert pg.locator(".dtile.min").count() == 1
+        pg.locator(".dtile").nth(1).click(); pg.wait_for_selector(".fl"); assert pg.evaluate("location.hash").endswith("/voos")
+        print("7. calendário de datas: menor preço marcado; clicar numa data abre os voos dela")
+
+        # ---- ações ----
+        pg.evaluate("location.hash = '#/'"); pg.wait_for_selector(".tcard")
+        # ---- autocompletar de aeroportos ----
+        pg.click("#btn-new"); f = "#form-watch "
+        o = pg.locator("#f-origin"); o.click(); o.press_sequentially("recif", delay=25)
+        pg.wait_for_selector("#ac-o:not([hidden]) li[data-i]")
+        first = pg.locator("#ac-o li").first.inner_text(); assert "REC" in first and "Recife" in first, first
+        o.press("Enter")
+        assert o.input_value() == "REC" and "Recife" in pg.locator("#simple-fields .ac-hint").first.inner_text() and pg.locator("#ac-o").is_hidden()
+        d = pg.locator("#f-dest"); d.click(); d.press_sequentially("cusc", delay=25); pg.wait_for_selector("#ac-d li[data-i]")
+        d.press("ArrowDown"); d.press("ArrowUp"); d.press("Enter")
+        assert d.input_value() == "CUZ" and "Cusco" in pg.locator("#simple-fields .ac-hint").nth(1).inner_text() and "Peru" in pg.locator("#simple-fields .ac-hint").nth(1).inner_text()
+        print("8. autocompletar: 'recif' -> REC · Recife; 'cusc' -> CUZ · Cusco · Peru (setas e Enter)")
+        o.fill(""); o.press_sequentially("sao pa", delay=25); pg.wait_for_selector("#ac-o li[data-i]")
+        codes = [li.locator("b").inner_text() for li in pg.locator("#ac-o li[data-i]").all()]
+        assert codes[0] == "SAO" and "GRU" in codes and "CGH" in codes, codes
+        o.press("Escape"); assert pg.locator("#ac-o").is_hidden() and pg.is_visible("#dlg-watch"), "Esc fecha só a lista"
+        pg.locator("#ac-o").evaluate("e => e.hidden"); o.press_sequentially("x"); o.fill(""); o.press_sequentially("zzzqq", delay=20)
+        assert "Nenhum aeroporto" in pg.locator("#ac-o").inner_text()
+        o.fill(""); o.press_sequentially("congonhas", delay=20); pg.wait_for_selector("#ac-o li[data-i]"); pg.locator("#ac-o li[data-i]").first.click()
+        assert o.input_value() == "CGH"
+        print("9. vários aeroportos por cidade (SAO, GRU, CGH), busca pelo nome do aeroporto, 'nenhum resultado' e Esc")
+        pg.click("#watch-cancel")
+
+        # ---- digitar só o nome (sem escolher) também funciona ao salvar ----
+        pg.click("#btn-new"); pg.check(f + "[name=trip][value=oneway]")
+        pg.fill("#f-origin", "lisboa"); pg.fill("#f-dest", "Brasília"); pg.fill(f + "[name=depart_date]", "2027-05-10"); pg.uncheck(f + "[name=run_now]")
+        pg.click("#watch-save"); pg.wait_for_selector('.tcard[data-open-trip="5"]')
+        c5 = pg.inner_text('.tcard[data-open-trip="5"]'); assert "LIS" in c5 and "BSB" in c5 and "Lisboa" in c5 and "Brasília" in c5, c5
+        print("10. texto digitado sem escolher ('lisboa' -> LIS, 'Brasília' -> BSB) é entendido ao salvar")
+        pg.click('.tcard[data-open-trip="5"]'); pg.wait_for_selector(".trip-head"); pg.click("[data-act=edit]")
+        assert pg.input_value("#f-origin") == "LIS" and "Lisboa" in pg.locator("#simple-fields .ac-hint").first.inner_text(), "editar mostra a cidade"
+        pg.click("#watch-cancel"); pg.once("dialog", lambda d: d.accept()); pg.click("[data-act=remove]"); pg.wait_for_selector(".tcard")
+
+        # ---- multi-destino: escolhendo na lista e encadeando trechos ----
+        pg.click("#btn-new"); pg.check(f + "[name=trip][value=multi]"); rows = pg.locator("#legs .leg-row")
+        rows.nth(0).locator(".leg-o").press_sequentially("guarulhos", delay=20); pg.wait_for_selector("#legs .ac-list:not([hidden]) li[data-i]"); rows.nth(0).locator(".leg-o").press("Enter")
+        rows.nth(0).locator(".leg-d").press_sequentially("roma", delay=20); pg.wait_for_selector("#legs .ac-list:not([hidden]) li[data-i]"); rows.nth(0).locator(".leg-d").press("Enter")
+        assert rows.nth(0).locator(".leg-o").input_value() == "GRU" and rows.nth(0).locator(".leg-d").input_value() == "ROM"
+        assert rows.nth(1).locator(".leg-o").input_value() == "ROM", "origem do trecho 2 encadeia"
+        rows.nth(0).locator(".leg-date").fill("2027-03-10")
+        rows.nth(1).locator(".leg-d").press_sequentially("veneza", delay=20); pg.wait_for_selector("#legs .ac-list:not([hidden]) li[data-i]"); rows.nth(1).locator(".leg-d").press("Enter")
+        rows.nth(1).locator(".leg-date").fill("2027-03-15")
+        pg.fill(f + "[name=label]", "Itália"); pg.uncheck(f + "[name=run_now]"); pg.click("#watch-save")
+        pg.wait_for_selector('.tcard[data-open-trip="5"]')
+        assert "Roma" in pg.inner_text('.tcard[data-open-trip="5"]') and "Veneza" in pg.inner_text('.tcard[data-open-trip="5"]')
+        print("11. multi-destino: trechos escolhidos na lista e encadeados; cartão mostra as cidades por extenso")
+        pg.click('.tcard[data-open-trip="5"] [data-act=run]'); pg.locator(".toast").filter(has_text="Coleta disparada").wait_for()
+        assert pg.locator(".toast a").first.get_attribute("href") == "https://github.com/Dusax/flight/actions/workflows/scrape.yml"
+        pg.locator('.tcard[data-open-trip="5"]').click(); pg.wait_for_selector(".trip-head")
+        assert "Sem resultados" in pg.inner_text("body")
+        pg.click("[data-act=toggle]"); pg.locator(".chip", has_text="Pausada").first.wait_for()
+        pg.on("dialog", lambda d: d.accept()); pg.click("[data-act=remove]"); pg.wait_for_selector(".tcard")
+        assert pg.locator('.tcard[data-open-trip="5"]').count() == 0 and pg.evaluate("location.hash") == "#/"
+        print("12. disparar, pausar e remover funcionam")
+
+        pg.goto(base + "/#/viagem/1/voos"); pg.wait_for_selector(".fl"); assert not pg.is_visible("#dlg-login")
+        print("13. link direto + sessão mantida após recarregar")
+        ctx.clear_cookies(); pg.click('[data-nav="/"]'); pg.click('.tcard [data-act=run]')
+        pg.wait_for_selector("#dlg-login[open]"); print("14. sessão expirada abre o login")
+        pg.fill("#form-login [name=password]", PW); pg.click("#login-go"); pg.wait_for_selector(".tcard")
+        pg.click("#btn-auth"); pg.locator(".toast").filter(has_text="Você saiu").wait_for(); assert pg.locator(".tcard").count() == 0
+
+        origins = {re.match(r"https?://[^/]+", u).group(0) for u in reqs if u.startswith("http")}
+        assert origins == {base}, origins
+        print("15. o navegador só falou com o próprio servidor:", origins)
+        assert not errs, errs
+        # celular: sem rolagem lateral
+        m = b.new_context(viewport={"width": 390, "height": 844}, is_mobile=True, has_touch=True); mp = m.new_page()
+        mp.goto(base); mp.fill("#form-login [name=password]", PW); mp.click("#login-go"); mp.wait_for_selector(".tcard")
+        for h in ("#/", "#/viagem/1/resumo", "#/viagem/3/voos", "#/viagem/2/comparar"):
+            mp.evaluate(f"location.hash = '{h}'"); mp.wait_for_timeout(250)
+            assert not mp.evaluate("document.documentElement.scrollWidth > window.innerWidth + 1"), f"rolagem lateral em {h}"
+        mp.click("#btn-new"); mp.check("#form-watch [name=trip][value=multi]")
+        mp.locator("#legs .leg-row").nth(0).locator(".leg-o").press_sequentially("new yo", delay=15); mp.wait_for_selector("#legs .ac-list:not([hidden]) li[data-i]")
+        assert not mp.evaluate("(() => { const d = document.querySelector('#dlg-watch'); return d.scrollWidth > d.clientWidth + 1; })()"), "o formulário não pode rolar para o lado"
+        lb = mp.locator("#legs .ac-list:not([hidden])").bounding_box(); db = mp.locator("#dlg-watch").bounding_box()
+        assert lb["x"] >= db["x"] - 1 and lb["x"] + lb["width"] <= db["x"] + db["width"] + 1, "sugestões dentro do formulário"
+        print("16. celular (390px): nenhuma tela com rolagem lateral; sugestões cabem no formulário")
+        b.close()
+
+    p2, base2 = start(omit_token=True); procs.append(p2)
+    with sync_playwright() as pw:
+        b = launch(pw); pg = b.new_page(); pg.goto(base2); pg.wait_for_selector(".banner.err")
+        assert "GH_TOKEN" in pg.inner_text("#banners") and not pg.is_visible("#dlg-login")
+        print("17. servidor sem GH_TOKEN: aviso vermelho dizendo o que falta")
+        b.close()
+finally:
+    for pr in procs: pr.terminate()
+print("TUDO OK")

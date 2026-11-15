@@ -1,0 +1,90 @@
+[
+ {
+  "id": 1,
+  "label": "Europa em 3 cidades",
+  "origin": "GRU",
+  "destination": "LIS",
+  "depart_date": "2026-12-20",
+  "return_date": null,
+  "legs": [
+   {
+    "origin": "GRU",
+    "destination": "LIS",
+    "date": "2026-12-20"
+   },
+   {
+    "origin": "LIS",
+    "destination": "MAD",
+    "date": "2026-12-27"
+   },
+   {
+    "origin": "MAD",
+    "destination": "GRU",
+    "date": "2027-01-03"
+   }
+  ],
+  "flex_days": 0,
+  "adults": 1,
+  "cabin": "economy",
+  "max_stops": null,
+  "currency": "BRL",
+  "every_hours": 24,
+  "compare_separate": true,
+  "booking_top": 1,
+  "active": true
+ },
+ {
+  "id": 2,
+  "label": "Lisboa no Natal",
+  "origin": "GRU",
+  "destination": "LIS",
+  "depart_date": "2026-12-20",
+  "return_date": "2026-12-30",
+  "legs": null,
+  "flex_days": 0,
+  "adults": 1,
+  "cabin": "economy",
+  "max_stops": null,
+  "currency": "BRL",
+  "every_hours": 24,
+  "compare_separate": true,
+  "booking_top": 1,
+  "active": true
+ },
+ {
+  "id": 3,
+  "label": "Ponte aérea",
+  "origin": "GRU",
+  "destination": "GIG",
+  "depart_date": "2026-12-05",
+  "return_date": null,
+  "legs": null,
+  "flex_days": 0,
+  "adults": 1,
+  "cabin": "economy",
+  "max_stops": 0,
+  "currency": "BRL",
+  "every_hours": 6,
+  "compare_separate": false,
+  "booking_top": 3,
+  "active": true
+ },
+ {
+  "id": 4,
+  "label": "De Recife para Cusco",
+  "origin": "REC",
+  "destination": "CUZ",
+  "depart_date": "2027-09-08",
+  "return_date": null,
+  "legs": null,
+  "flex_days": 7,
+  "adults": 1,
+  "cabin": "economy",
+  "max_stops": null,
+  "currency": "BRL",
+  "every_hours": 6,
+  "compare_separate": false,
+  "booking_top": 3,
+  "active": true
+ }
+]

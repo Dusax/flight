@@ -237,11 +237,15 @@ test("respostas da API não são cacheáveis; a página tem CSP sem conexões ex
   const page = await fetch(base + "/");
   const csp = page.headers.get("content-security-policy");
   assert.match(csp, /connect-src 'self'(;|$)/); assert.doesNotMatch(csp, /github/);
+  assert.match(csp, /style-src 'self'(;|$)/); assert.doesNotMatch(csp, /style-src[^;]*unsafe-inline/);          // nenhum estilo embutido
   assert.match(csp, /script-src 'self'(;|$)/); assert.doesNotMatch(csp, /script-src[^;]*unsafe-inline/);   // nenhum script embutido roda
   assert.equal(page.headers.get("x-robots-tag"), "noindex, nofollow");
   const html = await page.text();
   assert.ok(!/<script(?![^>]*\bsrc=)[^>]*>/.test(html), "sem <script> embutido");
   assert.ok(!/ on[a-z]+\s*=/.test(html), "sem manipuladores de evento inline");
+  const css = await (await fetch(base + "/style.css")).text();
+  assert.ok(css.length > 1000 && !/<style/.test(html), "estilos vêm de style.css");
   const app = await (await fetch(base + "/app.js")).text();
   assert.ok(!/github_pat_|api\.github\.com/.test(html + app), "a página não deve mais conhecer o GitHub");
+  assert.ok(!/\sstyle\s*=\s*["']/.test(html + app), "sem atributo style= (a CSP bloquearia)");
 });

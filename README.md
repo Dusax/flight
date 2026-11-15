@@ -98,6 +98,26 @@ roda de graça. O código fica público; o que você pesquisa, os preços e o hi
 `node webtests/run-server.mjs` sobe o painel com um GitHub **falso** (senha `senha-de-teste-123`) e `npm test` roda
 os testes das funções (login, sessão, CSRF, validação, vazamento de token). Os testes do coletor: `pytest`.
 
+### Como é o painel
+- **Visão geral:** indicadores (viagens, maior queda de preço, última e próxima coleta) e um cartão por viagem, com
+  preço, variação, mini-gráfico, tempo da viagem mais rápida e preço do voo direto.
+- **Detalhe de cada viagem** (clique no cartão; o endereço vira `#/viagem/ID/aba`, então dá para favoritar):
+  **Resumo** (melhor voo, faixa de preço típica, melhores datas, gráfico), **Voos** (cartões com saída → chegada,
+  duração, escalas, preço, bagagem e detalhes; ordenar e filtrar), **Datas** (calendário de preços),
+  **Histórico**, **Comparação** (pacote × trechos separados) e **Configuração**.
+- **Aeroportos com sugestões:** ao criar ou editar uma viagem, digite a cidade (em português ou inglês, com ou sem acento),
+  o nome do aeroporto ou o código, e escolha na lista (setas + Enter, mouse ou toque). Aparecem o código, a cidade, o nome
+  do aeroporto e o país. "São Paulo" oferece também **SAO** (todos os aeroportos da cidade), além de GRU, CGH...
+  Se você digitar só o nome e salvar, o painel entende (ex.: "Lisboa" vira LIS). A lista tem ~8 mil aeroportos
+  (`docs/airports.json`, gerada por `scripts/build_airports.py` a partir do pacote [`airportsdata`](https://pypi.org/project/airportsdata/),
+  licença MIT, dados do OurAirports e outras fontes abertas) e também mostra o nome da cidade em qualquer viagem.
+- Modo claro/escuro automático e layout de celular.
+
+### Testar o painel sem GitHub
+`npm run preview` sobe o painel com um GitHub **falso** e dados de exemplo (senha `senha-de-teste-123`). `npm test` roda os testes
+das funções (login, sessão, CSRF, validação, vazamento de token) e da busca de aeroportos, e `python webtests/e2e_panel.py` roda o
+teste de navegador (Playwright) que percorre a interface inteira, inclusive no celular. Os testes do coletor: `pytest`.
+
 ## Usar localmente (sem GitHub)
 
 ```bash

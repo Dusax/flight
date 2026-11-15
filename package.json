@@ -4,6 +4,7 @@
   "type": "module",
   "engines": { "node": "22.x" },
   "scripts": {
-    "test": "node --test webtests/*.test.mjs"
+    "test": "node --test webtests/*.test.mjs",
+    "preview": "node webtests/run-server.mjs webtests/seed/dashboard.json webtests/seed/watches.json"
   }
 }
