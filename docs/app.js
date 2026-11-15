@@ -149,6 +149,9 @@ const weekday = (iso) => isoToDate(iso).toLocaleDateString("pt-BR", { weekday: "
 const pct = (a, b) => (b ? Math.round(((a - b) / b) * 1000) / 10 : 0);
 const pctTxt = (p) => `${Math.abs(p).toFixed(1).replace(".", ",")}%`;
 
+/** Classe extra para valores muito longos (o preço encolhe em vez de empurrar o layout). */
+const bigCls = (txt) => (String(txt).length > 11 ? " xl" : "");
+
 function levelChip(l) {
   const m = { low: ["good", "down", "Preço baixo"], typical: ["", "equal", "Preço normal"], high: ["bad", "up", "Preço alto"] }[l];
   return m ? `<span class="chip ${m[0]}" title="Avaliação do Google para esta busca">${icon(m[1])}${m[2]}</span>` : "";
@@ -174,8 +177,10 @@ function spark(history, w = 128, h = 44) {
     <path class="a" d="${area}"/><path class="l" d="${line}"/><circle class="p" cx="${X(t1).toFixed(1)}" cy="${Y(last).toFixed(1)}" r="3.5"/></svg>`;
 }
 function routeViz(w, lg) {
-  const codes = routeCodes(w);
-  return `<div class="route ${lg ? "lg" : ""} ${codes.length > 3 ? "dense" : ""}">${codes.map((c, i) => `${i ? `<span class="link">${icon("plane")}</span>` : ""}<span class="code">${esc(c)}</span>`).join("")}</div>`;
+  const codes = routeCodes(w), n = codes.length;
+  // muitos trechos: fonte menor, seta simples e quebra de linha (6 códigos não cabem numa linha em cartão nenhum)
+  const many = n > 4;
+  return `<div class="route ${lg ? "lg" : ""} ${n > 3 ? "dense" : ""} ${many ? "many" : ""}">${codes.map((c, i) => `${i ? (many ? `<span class="link sm" aria-hidden="true">›</span>` : `<span class="link">${icon("plane")}</span>`) : ""}<span class="code">${esc(c)}</span>`).join("")}</div>`;
 }
 const cityLine = (w) => routeCodes(w).map(cityOf).join(" → ");
 const kindLabel = (w) => (isMulti(w) ? "Multi-destino" : w.return_date ? "Ida e volta" : "Só ida");
@@ -287,7 +292,7 @@ function tripCard(w) {
   if (!c) {
     body = `<div class="tcard-empty">${w.pending ? "Aguardando a primeira coleta. Use “Buscar agora” para acelerar." : w.last_status === "empty" ? "O Google não retornou voos para essas datas." : "Ainda sem resultados."}</div>`;
   } else {
-    body = `<div class="price-row"><div><div class="price-k">${esc(totalLabel(w))}</div><div class="price num">${money(c.min_price, w.currency)}</div>
+    body = `<div class="price-row"><div><div class="price-k">${esc(totalLabel(w))}</div><div class="price num${bigCls(money(c.min_price, w.currency))}">${money(c.min_price, w.currency)}</div>
         <div class="price-d">${deltaHtml(c.min_price, c.prev_price, w.currency, "vs. anterior")}</div></div>${spark(c.history)}</div>
       <div class="chips">${w.combos.length > 1 ? `<span class="chip good">${icon("cal")}Melhor data: ${esc(dateSpan(c))}</span>` : ""}${metaChips(w)}</div>
       <div class="facts">
@@ -377,7 +382,7 @@ function paneResumo(w, c) {
   return `<div class="hero">
     <section class="panel best">
       <div class="best-top"><div><div class="price-k">${esc(totalLabel(w))}${w.combos.length > 1 ? ` · ${esc(dateSpan(c))}` : ""}</div>
-        <div class="price lg num">${money(c.min_price, w.currency)}</div><div class="price-d">${deltaHtml(c.min_price, c.prev_price, w.currency)} ${per}</div></div>
+        <div class="price lg num${bigCls(money(c.min_price, w.currency))}">${money(c.min_price, w.currency)}</div><div class="price-d">${deltaHtml(c.min_price, c.prev_price, w.currency)} ${per}</div></div>
         <div class="chips">${levelChip(c.price_level)}</div></div>
       ${best ? `${itinHtml(best)}
         <div class="fl-air">${avatar(best.airline)}<div><b>${esc(best.airline)}</b><span class="muted small">${esc(best.flight_numbers || "")}${best.operated_by && best.operated_by !== best.airline ? ` · operado por ${esc(best.operated_by)}` : ""}</span></div></div>` : ""}
@@ -439,7 +444,7 @@ function flightRow(w, o, { cheapest, fastest, key }) {
     <div class="fl-times"><div><div class="fl-t num">${fmtTime(o.dep_time)}</div><div class="fl-c">${esc(o.origin)}</div></div>
       <div class="fl-mid"><b>${hm(o.duration_min)}</b><div class="flline ${o.stops ? "" : "direct"}">${"<i></i>".repeat(o.stops || 0)}</div><div>${stopsTxt(o.stops)}${o.layover_airports ? ` · ${esc(o.layover_airports.replace(/,/g, " · "))}` : ""}</div></div>
       <div class="ta-r"><div class="fl-t num">${fmtTime(o.arr_time)}${next > 0 ? `<span class="nextday">+${next}</span>` : ""}</div><div class="fl-c">${esc(o.destination)}</div></div></div>
-    <div class="fl-price"><div class="price num">${money(o.price, w.currency)}</div>${w.adults > 1 ? `<div class="muted small">${money(o.price / w.adults, w.currency)} por adulto</div>` : ""}</div>
+    <div class="fl-price"><div class="price num${bigCls(money(o.price, w.currency))}">${money(o.price, w.currency)}</div>${w.adults > 1 ? `<div class="muted small">${money(o.price / w.adults, w.currency)} por adulto</div>` : ""}</div>
   </div>
   <div class="fl-badges">${badges.join("")}</div>${detail ? `<details data-k="${esc(key)}"><summary>${icon("chev")}Detalhes do voo</summary><div class="fl-detail">${detail}</div></details>` : ""}</article>`;
 }
@@ -555,7 +560,7 @@ function paneComparar(w, c) {
   const legs = sp.legs.map((l, i) => `<div class="section-title">Trecho ${i + 1}: ${esc(l.origin)} → ${esc(l.destination)} · ${esc(fmtDay(l.date))} <span class="count">só ida</span></div>
     <div class="flights">${l.offers.length ? l.offers.slice(0, 5).map((o) => flightRow(w, o, { cheapest: o.price === l.min_price, fastest: o.duration_min === l.fastest_min, key: `${w.id}-L${i}-${o.flight_numbers}-${o.dep_time}` })).join("") : `<p class="muted">Sem coleta deste trecho ainda.</p>`}</div>`).join("");
   return `<section class="panel best stack"><div class="price-k">Pacote (${isMulti(w) ? "multi-destino" : "ida e volta"}) × trechos comprados separado</div><div class="verdict">${verdict}</div>
-      <div class="row"><div><div class="price-k">Pacote</div><div class="price num">${money(c.min_price, w.currency)}</div></div><div><div class="price-k">Soma dos trechos</div><div class="price num">${money(sp.total, w.currency)}</div></div></div>
+      <div class="row"><div><div class="price-k">Pacote</div><div class="price num${bigCls(money(c.min_price, w.currency))}">${money(c.min_price, w.currency)}</div></div><div><div class="price-k">Soma dos trechos</div><div class="price num${bigCls(money(sp.total, w.currency))}">${money(sp.total, w.currency)}</div></div></div>
       <p class="muted small nomargin">Passagens separadas não têm proteção se um voo atrasar e você perder o seguinte, e a bagagem precisa ser despachada de novo em cada conexão.</p></section>
     <section class="panel tablewrap stack"><table><thead><tr><th>Trecho</th><th>Data</th><th class="r">Mais barato</th><th class="r">Direto</th><th class="r">Mais rápido</th></tr></thead><tbody>${rows}</tbody>
       <tfoot><tr><td colspan="2">Soma dos trechos separados</td><td class="r num">${money(sp.total, w.currency)}</td><td class="r num">${money(sp.total_nonstop, w.currency)}</td><td></td></tr></tfoot></table></section>${legs}`;
@@ -666,6 +671,7 @@ function pickerSet(input, iata) {
   const d = iata ? Airports.describe(iata) : null;
   hint.textContent = d ? `${d.city}${d.country ? ` · ${d.country}` : ""}${d.name && !d.metro ? ` — ${d.name}` : ""}` : (iata ? cityOf(iata) : "");
   hint.classList.toggle("ok", !!d);
+  hint.title = hint.textContent;   // o texto pode ser cortado em 2 linhas: o nome completo fica no balão
 }
 /** Valor final do campo: o código escolhido, ou o que dá para entender do texto digitado (null se nada). */
 function pickerValue(input) {
