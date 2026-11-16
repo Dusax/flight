@@ -120,6 +120,7 @@ class FlightScraper:
         self.chromium_path = chromium_path or os.environ.get("FLIGHTS_CHROMIUM_PATH")
         self.debug_dir = Path(debug_dir) if debug_dir else None
         self.timeout_s = timeout_s
+        self.retry_wait = float(os.environ.get("FLIGHTS_RETRY_WAIT", 8))  # s, multiplicado pelo nº da tentativa
         self.max_expand = max_expand
         self._pw = self._browser = self._context = None
 
@@ -136,10 +137,20 @@ class FlightScraper:
                 "Não consegui abrir o Chromium. Rode `playwright install chromium` "
                 f"(ou use --chromium-path / FLIGHTS_CHROMIUM_PATH).\n{e}"
             ) from e
-        self._context = self._browser.new_context(
-            locale="en-US", user_agent=USER_AGENT, viewport={"width": 1366, "height": 900}
-        )
+        self._context = self._new_context()
         return self
+
+    def _new_context(self):
+        return self._browser.new_context(locale="en-US", user_agent=USER_AGENT, viewport={"width": 1366, "height": 900})
+
+    def _reset_context(self) -> None:
+        """Contexto novo (cookies e cache zerados): o Google às vezes devolve 'something went wrong' em série para
+        o mesmo contexto, e recomeçar do zero costuma resolver."""
+        try:
+            self._context.close()
+        except PlaywrightError:
+            pass
+        self._context = self._new_context()
 
     def __exit__(self, *exc):
         for obj in (self._context, self._browser):
@@ -151,7 +162,7 @@ class FlightScraper:
             self._pw.stop()
 
     # ------------------------------------------------------------------
-    def search(self, spec: SearchSpec, attempts: int = 2, detail_offers: int = 30, booking_top: int = 0) -> ScrapeResult:
+    def search(self, spec: SearchSpec, attempts: int = 3, detail_offers: int = 30, booking_top: int = 0) -> ScrapeResult:
         """`detail_offers`: quantos voos (os mais baratos) expandir para ler aeronave, assentos etc.
         `booking_top`: em buscas só de ida, quantos voos abrir na tela de compra (bagagem, vendedores)."""
         last: Optional[Exception] = None
@@ -163,7 +174,10 @@ class FlightScraper:
             except ScrapeError as e:
                 last = e
                 if attempt < attempts:
-                    time.sleep(3 + random.random() * 3)
+                    # espera crescente e contexto novo: nos servidores do GitHub o Google devolve páginas de erro
+                    # passageiras (cerca de 1 em cada 5 consultas) que somem ao tentar de novo um pouco depois
+                    time.sleep(self.retry_wait * attempt * (0.75 + random.random() * 0.5))
+                    self._reset_context()
         raise last  # type: ignore[misc]
 
     def _search_once(self, spec: SearchSpec, detail_offers: int, booking_top: int) -> ScrapeResult:

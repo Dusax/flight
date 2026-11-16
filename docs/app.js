@@ -225,7 +225,9 @@ const failed = (w) => !!w.last_status && !["ok", "empty"].includes(w.last_status
 const failTitle = (w) => `${w.last_status === "blocked" ? "Bloqueada pelo Google" : "Falhou"}${w.last_total > 1 ? ` (${w.last_failed} de ${w.last_total} consultas)` : ""}`;
 const failCause = (w) => (w.last_status === "blocked"
   ? "O Google pediu captcha por causa de muitas consultas seguidas do mesmo endereço. Não é defeito do sistema: a próxima coleta agendada tenta de novo. Evite disparar várias buscas em sequência."
-  : (w.last_error || "O erro não trouxe detalhe.").replace(/[\s.]*$/, ". ") + "Se repetir em toda coleta, o Google pode ter mudado a página.");
+  : /something went wrong/i.test(w.last_error || "")
+    ? "O Google Voos devolveu uma página de erro passageira (comum em coletas automáticas). O sistema já tentou 3 vezes; a próxima coleta repete sozinha."
+    : (w.last_error || "O erro não trouxe detalhe.").replace(/[\s.]*$/, ". ") + "Se repetir em toda coleta, o Google pode ter mudado a página.");
 const totalLabel = (w) => (isMulti(w) ? "Total da viagem inteira" : w.return_date ? "Total ida e volta" : "A partir de");
 
 /* ---------- renderização ---------- */

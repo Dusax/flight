@@ -119,3 +119,4 @@ def test_cli_ida_e_volta_com_periodos():
     spec = cli.spec_from_args(args)
     assert cli.ends_from_args(args, spec) == (date(2030, 5, 3), date(2030, 5, 12))
     assert MAX_COMBOS >= 9
+
