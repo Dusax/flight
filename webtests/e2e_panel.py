@@ -220,6 +220,36 @@ try:
         assert pg.evaluate("fetch('/api/favorites').then(r => r.json())")["list"] == []
         print("12c. favoritos: estrela no voo, aba Favoritos (preço quando salvou, visto na coleta), persiste, abrir viagem, desfazer, vazio")
 
+        # ---- consulta pontual: busca uma vez, sem cadastrar recorrência ----
+        pg.goto(base + "/#/"); pg.wait_for_selector(".tcard"); n0 = pg.locator(".tcard").count()
+        pg.click("#btn-once"); pg.wait_for_selector("#dlg-watch[open]")
+        assert "Consulta pontual" in pg.inner_text("#dlg-watch-title") and pg.is_visible("#once-note")
+        assert pg.is_hidden("#every-wrap") and pg.is_hidden("#name-wrap") and pg.is_hidden("#now-wrap") and "Consultar agora" in pg.inner_text("#watch-save")
+        pg.fill("#f-origin", "REC"); pg.fill("#f-dest", "SSA"); pg.check(f + "[name=trip][value=oneway]"); pg.fill(f + "[name=depart_date]", "2027-08-10")
+        pg.click("#watch-save"); pg.locator(".toast").filter(has_text="Coleta disparada").wait_for()
+        saved = pg.evaluate("fetch('/api/watches').then(r => r.json())")["list"]
+        once = [w for w in saved if w.get("once")]
+        assert len(once) == 1 and once[0]["every_hours"] is None and once[0]["label"] is None and once[0]["origin"] == "REC", once
+        oid = once[0]["id"]
+        pg.wait_for_selector(".section-title:has-text('Consultas pontuais')")
+        assert pg.locator(f'.tcard[data-open-trip="{oid}"] .chip:has-text("Pontual")').count() == 1
+        assert pg.locator(".tcard").count() == n0 + 1 and pg.locator(".kpis").inner_text().count("Viagens monitoradas") == 1
+        assert pg.locator(".kpi-v").first.inner_text() == str(n0), "pontual não entra na contagem de viagens monitoradas"
+        pg.click(f'.tcard[data-open-trip="{oid}"]'); pg.wait_for_selector(".trip-head")
+        assert pg.locator("[data-act=toggle]").count() == 0 and pg.locator("[data-act=promote]").count() == 1
+        pg.click("[data-act=promote]"); pg.wait_for_selector("#dlg-watch[open]")
+        assert "Monitorar" in pg.inner_text("#dlg-watch-title") and pg.is_visible("#every-wrap") and pg.input_value(f + "[name=every_hours]") == "24"
+        pg.uncheck(f + "[name=run_now]"); pg.click("#watch-save"); pg.wait_for_selector("#dlg-watch:not([open])", state="attached")
+        saved = pg.evaluate("fetch('/api/watches').then(r => r.json())")["list"]
+        w = next(x for x in saved if x["id"] == oid); assert w["once"] is False and w["every_hours"] == 24, w
+        pg.click('[data-nav="/"]'); pg.wait_for_selector(".tcard"); assert pg.locator(".section-title:has-text('Consultas pontuais')").count() == 0
+        pg.click("#btn-once"); pg.fill("#f-origin", "REC"); pg.fill("#f-dest", "FOR"); pg.check(f + "[name=trip][value=oneway]"); pg.fill(f + "[name=depart_date]", "2027-08-11"); pg.click("#watch-save")
+        pg.wait_for_selector(".section-title:has-text('Consultas pontuais')")
+        pg.click("[data-act=clear-once]"); pg.wait_for_selector(".section-title:has-text('Consultas pontuais')", state="detached")
+        assert not [x for x in pg.evaluate("fetch('/api/watches').then(r => r.json())")["list"] if x.get("once")]
+        pg.click(f'.tcard[data-open-trip="{oid}"]'); pg.wait_for_selector(".trip-head"); pg.click("[data-act=remove]"); pg.wait_for_selector(".tcard")
+        print("12d. consulta pontual: botão próprio, sem recorrência, seção separada, fora dos indicadores, virar monitoramento, limpar todas")
+
         pg.goto(base + "/#/viagem/1/voos"); pg.wait_for_selector(".fl"); assert not pg.is_visible("#dlg-login")
         print("13. link direto + sessão mantida após recarregar")
         ctx.clear_cookies(); pg.click('[data-nav="/"]'); pg.click('.tcard [data-act=run]')

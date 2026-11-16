@@ -314,3 +314,11 @@ test("favoritos: dados inválidos são recusados", async () => {
   const ok = await call("/api/favorites", { method: "PUT", body: { list: [fav({ trip: { origin: "GRU", destination: "LIS", adults: 1, legs: [{ origin: "GRU", destination: "ROM" }, { origin: "ROM", destination: "LIS" }] }, dates: ["2027-02-10", "2027-02-15"] })] }, cookie });
   assert.equal(ok.status, 200, ok.text);
 });
+
+test("normalizeWatch: consulta pontual (once) nunca é agendada", () => {
+  assert.equal(normalizeWatch(watch({ once: true, every_hours: 24 })).every_hours, null);
+  assert.equal(normalizeWatch(watch({ once: true })).once, true);
+  assert.equal(normalizeWatch(watch({ once: "sim" })).once, false);   // só booleano true vale
+  assert.equal(normalizeWatch(watch()).once, false);
+  assert.equal(normalizeWatch(watch({ once: false, every_hours: 12 })).every_hours, 12);
+});

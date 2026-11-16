@@ -54,6 +54,7 @@
     <div class="appbar-actions">
       <button class="btn primary" id="btn-all" disabled title="Buscar agora (todas as viagens)" aria-label="Buscar agora, todas as viagens"><svg class="ico"><use href="#i-refresh"/></svg><span class="lbl">Buscar agora</span></button>
       <button class="btn" id="btn-favs" disabled data-nav="/favoritos" title="Voos favoritos" aria-label="Voos favoritos"><svg class="ico"><use href="#i-star"/></svg><span class="lbl">Favoritos</span><span class="badge" id="fav-count" hidden></span></button>
+      <button class="btn" id="btn-once" disabled title="Consulta pontual: busca uma vez, sem repetir" aria-label="Consulta pontual"><svg class="ico"><use href="#i-bolt"/></svg><span class="lbl">Consulta pontual</span></button>
       <button class="btn" id="btn-new" disabled title="Nova viagem" aria-label="Nova viagem"><svg class="ico"><use href="#i-plus"/></svg><span class="lbl">Nova viagem</span></button>
       <button class="btn ghost" id="btn-auth" title="Entrar ou sair"><svg class="ico"><use href="#i-in"/></svg><span class="lbl" id="auth-label">Entrar</span></button>
     </div>
@@ -70,7 +71,8 @@
 <dialog id="dlg-watch">
   <form method="dialog" id="form-watch" autocomplete="off">
     <h2 id="dlg-watch-title">Nova viagem</h2>
-    <label class="f">Nome (opcional)<input name="label" maxlength="60" placeholder="Ex.: Lisboa no Natal"></label>
+    <p class="muted small nomargin" id="once-note" hidden>Busca uma vez, agora, sem cadastrar para repetir. O resultado fica na lista <b>Consultas pontuais</b> (você remove quando quiser ou transforma em monitoramento). Leva de 1 a 5 minutos.</p>
+    <label class="f" id="name-wrap">Nome (opcional)<input name="label" maxlength="60" placeholder="Ex.: Lisboa no Natal"></label>
     <div class="seg-radio" role="radiogroup" aria-label="Tipo de viagem">
       <label><input type="radio" name="trip" value="round" checked> Ida e volta</label>
       <label><input type="radio" name="trip" value="oneway"> Só ida</label>
@@ -117,7 +119,7 @@
         <select name="flex_days"><option value="0">Só essa data</option><option value="1">± 1 dia</option><option value="2">± 2 dias</option><option value="3">± 3 dias</option><option value="7">± 7 dias</option></select>
         <small>Cada dia extra é uma consulta a mais.</small>
       </label>
-      <label class="f">Coletar automaticamente
+      <label class="f" id="every-wrap">Coletar automaticamente
         <select name="every_hours">
           <option value="">Nunca (só quando eu pedir)</option>
           <option value="1">A cada 1 hora</option><option value="3">A cada 3 horas</option><option value="6">A cada 6 horas</option>

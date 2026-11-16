@@ -20,6 +20,11 @@ frequência de cada uma pelo próprio painel e pode disparar uma coleta na hora.
 - **Comparar separado:** além do pacote, consulta cada trecho como só ida e soma os
   mais baratos. O painel diz se o pacote ou o separado compensa, e quanto. Vale para
   ida e volta e multi-destino. Passagens separadas não têm proteção de conexão.
+- **Consulta pontual:** o botão **Consulta pontual** (raio, no topo) busca uma vez, na hora, sem cadastrar para repetir.
+  Usa o mesmo formulário (ida, ida e volta, multi-destino, períodos de datas), mas sem nome nem frequência. Dispara a
+  coleta e o resultado (1 a 5 min) fica na seção **Consultas pontuais** da lista, fora dos indicadores. Nunca entra no
+  agendamento nem no “Buscar agora” geral; no detalhe, **Monitorar daqui pra frente** a transforma numa viagem
+  monitorada, e **Limpar todas** apaga as pontuais. Tecnicamente é uma busca com `once: true` no `watches.json`.
 - **Voos favoritos:** na aba Voos de qualquer viagem, o botão **Favoritar** (estrela) guarda o voo. A aba **Favoritos**
   (botão no topo) junta todos, com o preço de quando você salvou, o preço atual, a variação a cada coleta, se o voo
   apareceu na última coleta e um atalho “Ver na viagem”. Ordena por mais recentes, menor preço ou data. Desfazer ao remover.

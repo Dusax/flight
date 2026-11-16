@@ -215,7 +215,7 @@ const datesDetail = (w) => (isMulti(w) ? w.legs.map((l) => `${l.origin}→${l.de
   : w.return_date ? `Ida ${spanText(w.depart_date, w.depart_to)} · Volta ${spanText(w.return_date, w.return_to)}`
   : hasRange(w) ? `Ida ${spanText(w.depart_date, w.depart_to)}` : dateChipText(w));
 function metaChips(w) {
-  const out = [`<span class="chip brand">${esc(kindLabel(w))}</span>`, `<span class="chip">${icon("cal")}${esc(dateChipText(w))}</span>`];
+  const out = [...(w.once ? [`<span class="chip warn">${icon("bolt")}Pontual</span>`] : []), `<span class="chip brand">${esc(kindLabel(w))}</span>`, `<span class="chip">${icon("cal")}${esc(dateChipText(w))}</span>`];
   if (w.flex_days) out.push(`<span class="chip">± ${w.flex_days} dia${w.flex_days > 1 ? "s" : ""}</span>`);
   if (hasRange(w)) out.push(`<span class="chip">${icon("cal")}Período de datas</span>`);
   if (w.coverage && w.coverage.seen < w.coverage.space) out.push(`<span class="chip" title="Cada coleta consulta até ${w.budget} combinações; as demais entram nas próximas.">Vistas ${w.coverage.seen} de ${w.coverage.space} datas</span>`);
@@ -224,6 +224,7 @@ function metaChips(w) {
   return out.join("");
 }
 function nextText(w) {
+  if (w.once) return "Consulta pontual: não se repete";
   if (!w.active) return "Coleta pausada";
   if (w.expired) return "Viagem já passou";
   if (!w.every_hours) return "Só quando você pedir";
@@ -256,7 +257,7 @@ function render() {
   const d = state.dashboard;
   $("#updated").textContent = d?.generated_at ? `Dados de ${fmtStamp(d.generated_at)} · ${ago(d.generated_at)}` : "Sem coletas ainda";
   $("#btn-all").disabled = !canWrite() || !ws.length;
-  $("#btn-new").disabled = !canWrite();
+  $("#btn-new").disabled = !canWrite(); $("#btn-once").disabled = !canWrite();
   $("#btn-favs").disabled = !canWrite(); $("#btn-favs").classList.toggle("on", state.view.type === "favs");
   $("#btn-favs").setAttribute("aria-pressed", state.view.type === "favs"); $("#btn-favs").title = state.view.type === "favs" ? "Voltar para as viagens" : "Voos favoritos";
   $("#fav-count").hidden = !state.favs.length; $("#fav-count").textContent = state.favs.length;
@@ -269,7 +270,7 @@ function render() {
   if (!ws.length) {
     $("#view").innerHTML = `<div class="panel empty">${icon("plane")}<h2>${canWrite() ? "Nenhuma viagem ainda" : "Entre para ver as suas viagens"}</h2>
       <p class="muted">${canWrite() ? "Cadastre a primeira e o painel passa a acompanhar os preços para você." : "Os preços ficam guardados no seu repositório privado."}</p>
-      ${canWrite() ? `<button class="btn primary" data-act="new">${icon("plus")}Nova viagem</button>` : ""}</div>`;
+      ${canWrite() ? `<button class="btn primary" data-act="new">${icon("plus")}Nova viagem</button> <button class="btn" data-act="once">${icon("bolt")}Consulta pontual</button>` : ""}</div>`;
     return;
   }
   if (v.type === "trip") {
@@ -333,7 +334,7 @@ function tripCard(w) {
   if (failed(w)) chips.push(partial(w) ? `<span class="chip warn">${icon("alert")}${w.last_failed} de ${w.last_total} falharam</span>` : `<span class="chip bad">${icon("alert")}Coleta falhou</span>`);
   let body;
   if (!c) {
-    body = `<div class="tcard-empty">${w.pending ? "Aguardando a primeira coleta. Use “Buscar agora” para acelerar." : w.last_status === "empty" ? "O Google não retornou voos para essas datas." : "Ainda sem resultados."}</div>`;
+    body = `<div class="tcard-empty">${w.pending ? (w.once ? "Consultando o Google Voos… leva de 1 a 5 minutos; a página atualiza sozinha. Se não chegar, use “Buscar agora”." : "Aguardando a primeira coleta. Use “Buscar agora” para acelerar.") : w.last_status === "empty" ? "O Google não retornou voos para essas datas." : "Ainda sem resultados."}</div>`;
   } else {
     body = `<div class="price-row"><div><div class="price-k">${esc(totalLabel(w))}</div><div class="price num${bigCls(money(c.min_price, w.currency))}">${money(c.min_price, w.currency)}</div>
         <div class="price-d">${deltaHtml(c.min_price, c.prev_price, w.currency, "vs. anterior")}</div></div>${spark(c.history)}</div>
@@ -356,9 +357,15 @@ function tripCard(w) {
 }
 
 function renderList(ws) {
-  const order = [...ws].sort((a, b) => (b.active && !b.expired) - (a.active && !a.expired) || a.id - b.id);
-  $("#view").innerHTML = `${kpisHtml(ws)}<div class="section-title">Minhas viagens <span class="count">${ws.length}</span></div>
-    <div class="trips">${order.map(tripCard).join("")}</div>`;
+  const rank = (a, b) => (b.active && !b.expired) - (a.active && !a.expired) || a.id - b.id;
+  const mon = ws.filter((w) => !w.once).sort(rank), once = ws.filter((w) => w.once).sort((a, b) => b.id - a.id);
+  $("#view").innerHTML = `${mon.length ? kpisHtml(mon) : ""}
+    ${mon.length || !once.length ? `<div class="section-title">Minhas viagens <span class="count">${mon.length}</span></div>
+      ${mon.length ? `<div class="trips">${mon.map(tripCard).join("")}</div>` : `<div class="panel empty">${icon("plane")}<h2>Nenhuma viagem monitorada</h2><p class="muted">Cadastre uma viagem para o painel acompanhar os preços, ou use uma consulta pontual.</p></div>`}` : ""}
+    ${once.length ? `<div class="section-title">Consultas pontuais <span class="count">${once.length}</span>
+        <button class="btn sm ghost" data-act="clear-once" ${canWrite() ? "" : "disabled"}>${icon("trash")}Limpar todas</button></div>
+      <p class="muted small">Buscas feitas uma vez, sem repetição automática. Abra para ver os voos ou use “Monitorar daqui pra frente” para acompanhar o preço.</p>
+      <div class="trips">${once.map(tripCard).join("")}</div>` : ""}`;
 }
 
 /* ---- detalhe da viagem ---- */
@@ -380,7 +387,8 @@ function renderTrip(w, v) {
         <div class="trip-actions">
           <button class="btn primary" data-act="run" data-id="${w.id}" ${rw ? "" : "disabled"}>${icon("refresh")}Buscar agora</button>
           <button class="btn" data-act="edit" data-id="${w.id}" ${rw ? "" : "disabled"}>${icon("edit")}Editar</button>
-          <button class="btn" data-act="toggle" data-id="${w.id}" ${rw ? "" : "disabled"}>${icon(w.active ? "pause" : "play")}${w.active ? "Pausar" : "Retomar"}</button>
+          ${w.once ? `<button class="btn" data-act="promote" data-id="${w.id}" ${rw ? "" : "disabled"}>${icon("bell")}Monitorar daqui pra frente</button>`
+            : `<button class="btn" data-act="toggle" data-id="${w.id}" ${rw ? "" : "disabled"}>${icon(w.active ? "pause" : "play")}${w.active ? "Pausar" : "Retomar"}</button>`}
           <button class="btn danger" data-act="remove" data-id="${w.id}" ${rw ? "" : "disabled"}>${icon("trash")}Remover</button>
         </div>
       </div>
@@ -622,7 +630,7 @@ function paneComparar(w, c) {
 /* ---- configuração ---- */
 function configPanel(w) {
   const kv = (k, v) => `<div><div class="kv-k">${k}</div><div class="kv-v">${v}</div></div>`;
-  const every = w.every_hours ? (EVERY[w.every_hours] || `a cada ${w.every_hours} h`) : "só quando você pedir";
+  const every = w.once ? "não: consulta pontual (roda só quando você pede)" : w.every_hours ? (EVERY[w.every_hours] || `a cada ${w.every_hours} h`) : "só quando você pedir";
   return `<section class="panel panel-pad"><div class="kv">
     ${kv("Tipo", esc(kindLabel(w)))}${kv("Trajeto", esc(isMulti(w) ? cityLine(w) : `${cityOf(w.origin)} → ${cityOf(w.destination)}`))}
     ${kv("Datas", esc(datesDetail(w)))}
@@ -780,6 +788,15 @@ document.addEventListener("click", (e) => {
   if (t.dataset.openTrip) return go(`/viagem/${t.dataset.openTrip}/resumo`);
   const act = t.dataset.act, id = +t.dataset.id;
   if (act === "new") return openWatchDialog(null);
+  if (act === "once") return openWatchDialog(null, "once");
+  if (act === "promote") return openWatchDialog(state.watches.find((w) => w.id === id), "promote");
+  if (act === "clear-once") {
+    const n = state.watches.filter((w) => w.once).length;
+    if (n && confirm(`Remover ${n === 1 ? "a consulta pontual" : `as ${n} consultas pontuais`}? Os resultados somem do painel (os favoritos continuam).`)) guard(async () => {
+      await saveWatches(state.watches.filter((w) => !w.once), "consultas pontuais removidas"); render();
+    }, "Consultas pontuais removidas.");
+    return;
+  }
   if (act === "run") guard(() => dispatch([id]));
   if (act === "edit") openWatchDialog(state.watches.find((w) => w.id === id));
   if (act === "toggle") guard(async () => {
@@ -804,6 +821,7 @@ document.addEventListener("keydown", (e) => {
 });
 $("#btn-all").onclick = () => guard(() => dispatch([]));
 $("#btn-new").onclick = () => openWatchDialog(null);
+$("#btn-once").onclick = () => openWatchDialog(null, "once");
 $("#btn-auth").onclick = async () => {
   if (!state.authed) return openLogin();
   try { await api("/api/logout", { method: "POST", body: "{}" }); } catch {}
@@ -990,10 +1008,16 @@ formW.use_range.addEventListener("change", () => {
   syncTrip();
 });
 
-function openWatchDialog(w) {
+/* mode: "once" (consulta pontual), "promote" (pontual -> monitoramento) ou nada (viagem monitorada) */
+function openWatchDialog(w, mode) {
   state.editingId = w ? w.id : null;
+  state.dlgOnce = mode === "once" || (!!w?.once && mode !== "promote");
   formW.reset(); $("#watch-err").textContent = "";
-  $("#dlg-watch-title").textContent = w ? `Editar viagem ${routeText(w)}` : "Nova viagem";
+  $("#dlg-watch-title").textContent = state.dlgOnce ? (w ? `Editar consulta pontual ${routeText(w)}` : "Consulta pontual")
+    : mode === "promote" ? `Monitorar ${routeText(w)}` : w ? `Editar viagem ${routeText(w)}` : "Nova viagem";
+  for (const id of ["#name-wrap", "#every-wrap", "#now-wrap"]) $(id).hidden = state.dlgOnce;
+  $("#once-note").hidden = !state.dlgOnce;
+  $("#watch-save").textContent = state.dlgOnce ? "Consultar agora" : "Salvar";
   formW.depart_date.min = todayIso(); formW.return_date.min = todayIso(); formW.depart_to.min = todayIso(); formW.return_to.min = todayIso();
   pickerSet(formW.origin, ""); pickerSet(formW.destination, "");
   setLegs(w && isMulti(w) ? w.legs : null);
@@ -1002,7 +1026,7 @@ function openWatchDialog(w) {
     if (!isMulti(w)) { pickerSet(formW.origin, w.origin); pickerSet(formW.destination, w.destination); formW.depart_date.value = w.depart_date; formW.return_date.value = w.return_date || ""; formW.depart_to.value = w.depart_to || ""; formW.return_to.value = w.return_to || ""; }
     formW.use_range.checked = hasRange(w); formW.budget.value = String(w.budget || 40);
     formW.adults.value = w.adults; formW.cabin.value = w.cabin; formW.max_stops.value = w.max_stops ?? "";
-    formW.flex_days.value = String(w.flex_days || 0); formW.every_hours.value = w.every_hours ? String(w.every_hours) : "";
+    formW.flex_days.value = String(w.flex_days || 0); formW.every_hours.value = w.every_hours ? String(w.every_hours) : (mode === "promote" ? "24" : "");
     formW.compare_separate.checked = !!w.compare_separate; formW.booking_top.value = String(w.booking_top ?? 0);
   }
   syncTrip(); dlgW.showModal();
@@ -1014,11 +1038,11 @@ formW.addEventListener("submit", async (e) => {
   const fail = (m) => { err.textContent = m; };
   const iata = (v) => /^[A-Z]{3}$/.test(v);
   const item = {
-    id: state.editingId ?? nextId(), label: (f.get("label") || "").trim() || null,
+    id: state.editingId ?? nextId(), label: state.dlgOnce ? null : (f.get("label") || "").trim() || null,
     origin: "", destination: "", depart_date: "", return_date: null, legs: null,
     flex_days: useRange() ? 0 : +f.get("flex_days"), budget: useRange() ? +f.get("budget") : 40, adults: +f.get("adults"), cabin: f.get("cabin"),
     max_stops: f.get("max_stops") === "" ? null : +f.get("max_stops"), currency: "BRL",
-    every_hours: f.get("every_hours") ? +f.get("every_hours") : null,
+    every_hours: !state.dlgOnce && f.get("every_hours") ? +f.get("every_hours") : null, once: state.dlgOnce,
     compare_separate: kind !== "oneway" && formW.compare_separate.checked, booking_top: +f.get("booking_top"),
     active: state.editingId != null ? (state.watches.find((w) => w.id === state.editingId)?.active ?? true) : true,
   };
@@ -1048,11 +1072,11 @@ formW.addEventListener("submit", async (e) => {
     if (!planInfo()) return fail($("#plan-info").textContent);
   }
   err.textContent = "";
-  const runNow = f.get("run_now") === "on";
+  const runNow = state.dlgOnce || f.get("run_now") === "on";
   $("#watch-save").disabled = true;
   await guard(async () => {
     const list = state.editingId != null ? state.watches.map((w) => (w.id === item.id ? item : w)) : [...state.watches, item];
-    await saveWatches(list, `busca ${item.id}: ${routeText(item)} ${state.editingId != null ? "editada" : "criada"}`);
+    await saveWatches(list, `${item.once ? "consulta pontual" : "busca"} ${item.id}: ${routeText(item)} ${state.editingId != null ? "editada" : "criada"}`);
     dlgW.close(); render();
     toast("Busca salva.");
     if (runNow) await dispatch([item.id]);

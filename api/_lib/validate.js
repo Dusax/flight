@@ -106,6 +106,8 @@ export function normalizeWatch(w) {
   out.currency = cur;
   if (w.every_hours != null && !int(w.every_hours, 1, 24 * 30)) throw new Error("frequência: 1 a 720 horas");
   out.every_hours = w.every_hours ?? null;
+  out.once = w.once === true;               // consulta pontual: roda quando pedida, nunca no agendamento
+  if (out.once) out.every_hours = null;
   out.compare_separate = w.compare_separate === true;
   if (!int(w.booking_top ?? 0, 0, 10)) throw new Error("detalhar compra: 0 a 10");
   out.booking_top = w.booking_top ?? 0;

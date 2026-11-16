@@ -443,3 +443,5 @@ label.f.check input { width: auto; min-height: 0; }
   .fav-head .spark { display: none; }
   .fav-acts { justify-self: start; }
 }
+
+.section-title .btn { margin-left: auto; text-transform: none; letter-spacing: 0; font-weight: 600; }

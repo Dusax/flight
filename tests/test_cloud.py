@@ -241,3 +241,33 @@ def test_run_so_fica_vermelho_se_nada_deu_certo(tmp_path, monkeypatch, capsys):
     assert "::warning::1 de 3 consulta" in capsys.readouterr().out
     monkeypatch.setattr(cli, "make_scraper", lambda a: fake(True))
     assert cli.main(["--db", dbp, "run"]) == 1
+
+
+def test_consulta_pontual_nao_entra_no_agendamento_nem_no_buscar_agora_geral(tmp_path, monkeypatch):
+    """`once`: roda só quando pedida pelo id; nunca fica agendada e o 'buscar agora' geral não a repete."""
+    soon = date.today() + timedelta(days=40)
+    base = {**PAGE_ITEM, "depart_date": soon.isoformat(), "return_date": None, "flex_days": 0, "active": True}
+    f = tmp_path / "w.json"
+    f.write_text(json.dumps([{**base, "id": 1, "every_hours": 24}, {**base, "id": 2, "once": True, "every_hours": 24, "origin": "FCO", "destination": "VCE"}]))
+    dbp = str(tmp_path / "x.db")
+    asked = []
+
+    class Fake:
+        def __enter__(self): return self
+        def __exit__(self, *a): pass
+        def search(self, spec, **kw):
+            asked.append(spec.origin)
+            return ScrapeResult([offer(1000)], "https://www.google.com/x", "typical")
+
+    monkeypatch.setattr(cli, "make_scraper", lambda a: Fake())
+    monkeypatch.setattr(cli.time, "sleep", lambda s: None)
+    assert cli.main(["--db", dbp, "sync-watches", str(f)]) == 0
+    conn = db.connect(dbp)
+    w = {r["id"]: r for r in db.list_watches(conn)}
+    assert w[2]["once"] == 1 and w[2]["every_hours"] is None and w[1]["once"] == 0       # pontual nunca é agendada
+    assert not db.is_due(conn, w[2])
+    assert cli.main(["--db", dbp, "run"]) == 0 and asked == [PAGE_ITEM["origin"]]       # geral: só a monitorada
+    asked.clear()
+    assert cli.main(["--db", dbp, "run", "2"]) == 0 and asked == ["FCO"]                 # pelo id: a pontual roda
+    dash = {x["id"]: x for x in db.build_dashboard(db.connect(dbp))["watches"]}
+    assert dash[2]["once"] is True and dash[1]["once"] is False

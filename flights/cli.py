@@ -239,7 +239,8 @@ def cmd_multi(args) -> int:
 
 def cmd_run(args) -> int:
     conn = db.connect(args.db)
-    rows = [r for r in db.list_watches(conn, only_active=True) if not args.ids or r["id"] in args.ids]
+    # consultas pontuais só rodam quando pedidas pelo id (o "buscar agora" geral e o agendamento não as repetem)
+    rows = [r for r in db.list_watches(conn, only_active=True) if (r["id"] in args.ids if args.ids else not r["once"])]
     if args.due:
         rows = [r for r in rows if db.is_due(conn, r)]
         if not rows:

@@ -23,6 +23,7 @@ CREATE TABLE IF NOT EXISTS watches (
     cabin        TEXT NOT NULL DEFAULT 'economy',
     max_stops    INTEGER,
     currency     TEXT NOT NULL DEFAULT 'BRL',
+    once         INTEGER NOT NULL DEFAULT 0,   -- consulta pontual: roda quando pedida, nunca no agendamento
     budget       INTEGER NOT NULL DEFAULT 40,  -- consultas por coleta quando há período de datas
     date_ranges  TEXT,                    -- fim do período de cada trecho: ["2026-12-25", null, ...] (NULL = sem período)
     every_hours  INTEGER,                 -- frequência da coleta agendada; NULL = só manual
@@ -115,7 +116,7 @@ def _migrate(conn) -> None:
     wanted = {
         "watches": {"every_hours": "INTEGER", "legs_json": "TEXT", "compare_separate": "INTEGER NOT NULL DEFAULT 0",
                     "booking_top": "INTEGER NOT NULL DEFAULT 0", "date_ranges": "TEXT",
-                    "budget": "INTEGER NOT NULL DEFAULT 40"},
+                    "budget": "INTEGER NOT NULL DEFAULT 40", "once": "INTEGER NOT NULL DEFAULT 0"},
         "searches": {"min_nonstop": "REAL", "fastest_min": "INTEGER", "legs_json": "TEXT", "leg_index": "INTEGER"},
         "offers": {"cabin": "TEXT", "aircraft": "TEXT", "co2_kg": "INTEGER", "co2_diff_pct": "INTEGER",
                    "overnight": "INTEGER", "often_delayed": "INTEGER", "segments_json": "TEXT", "booking_json": "TEXT"},
@@ -151,19 +152,19 @@ def watch_plan(row, today: Optional[date] = None, include_past: bool = False) ->
 
 def add_watch(conn, spec: SearchSpec, flex_days: int = 0, label: Optional[str] = None,
               every_hours: Optional[int] = None, compare_separate: bool = False, booking_top: int = 0,
-              ends=None, budget: int = DEFAULT_BUDGET) -> int:
+              ends=None, budget: int = DEFAULT_BUDGET, once: bool = False) -> int:
     ends = normalize_ends(spec, ends)
     check_plan(spec, flex_days, ends)
     check_budget(budget)
     cur = conn.execute(
         """INSERT INTO watches (label, origin, destination, depart_date, return_date, flex_days,
                                 adults, cabin, max_stops, currency, every_hours, legs_json, compare_separate,
-                                booking_top, date_ranges, budget, created_at)
-           VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)""",
+                                booking_top, date_ranges, budget, once, created_at)
+           VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)""",
         (label, spec.origin, spec.destination, spec.depart_date.isoformat(),
          spec.return_date.isoformat() if spec.return_date else None, flex_days,
          spec.adults, spec.cabin, spec.max_stops, spec.currency, every_hours, spec.legs_json,
-         int(compare_separate), booking_top, ends_to_json(ends), budget, utcnow()),
+         int(compare_separate), booking_top, ends_to_json(ends), budget, int(once), utcnow()),
     )
     conn.commit()
     return cur.lastrowid
@@ -437,6 +438,9 @@ def sync_watches(conn, items: List[dict]) -> Tuple[int, List[str]]:
             check_plan(spec, flex, ends)
             budget = int(it.get("budget") or DEFAULT_BUDGET)
             check_budget(budget)
+            once = bool(it.get("once"))
+            if once:
+                every = None   # consulta pontual nunca é agendada
             if every is not None and every < 1:
                 raise ValueError("every_hours deve ser >= 1")
             if not 0 <= booking_top <= 10:
@@ -447,16 +451,16 @@ def sync_watches(conn, items: List[dict]) -> Tuple[int, List[str]]:
         vals = (spec.origin, spec.destination, spec.depart_date.isoformat(),
                 spec.return_date.isoformat() if spec.return_date else None, flex, spec.adults, spec.cabin,
                 spec.max_stops, spec.currency, every, spec.legs_json, int(bool(it.get("compare_separate"))),
-                booking_top, int(it.get("active", True)), (it.get("label") or None), ends_to_json(ends), budget)
+                booking_top, int(it.get("active", True)), (it.get("label") or None), ends_to_json(ends), budget, int(once))
         exists = conn.execute("SELECT 1 FROM watches WHERE id = ?", (wid,)).fetchone()
         if exists:
             conn.execute("""UPDATE watches SET origin=?, destination=?, depart_date=?, return_date=?, flex_days=?,
                             adults=?, cabin=?, max_stops=?, currency=?, every_hours=?, legs_json=?,
-                            compare_separate=?, booking_top=?, active=?, label=?, date_ranges=?, budget=? WHERE id=?""", vals + (wid,))
+                            compare_separate=?, booking_top=?, active=?, label=?, date_ranges=?, budget=?, once=? WHERE id=?""", vals + (wid,))
         else:
             conn.execute("""INSERT INTO watches (origin, destination, depart_date, return_date, flex_days, adults,
                             cabin, max_stops, currency, every_hours, legs_json, compare_separate, booking_top,
-                            active, label, date_ranges, budget, id, created_at) VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)""",
+                            active, label, date_ranges, budget, once, id, created_at) VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)""",
                          vals + (wid, utcnow()))
         keep.append(wid)
     if keep:
@@ -642,7 +646,7 @@ def build_dashboard(conn, today: Optional[date] = None, favorites=None) -> Dict:
             "id": w["id"], "label": w["label"], "origin": w["origin"], "destination": w["destination"],
             "depart_date": w["depart_date"], "return_date": w["return_date"], "flex_days": w["flex_days"],
             "adults": w["adults"], "cabin": w["cabin"], "max_stops": w["max_stops"], "currency": w["currency"],
-            "every_hours": w["every_hours"], "active": bool(w["active"]),
+            "every_hours": w["every_hours"], "active": bool(w["active"]), "once": bool(w["once"]),
             "trip_type": spec.trip_type, "route": spec.route(),
             "legs": [{"origin": l.origin, "destination": l.destination, "date": l.date.isoformat(),
                       "date_to": ends[i].isoformat() if ends[i] else None} for i, l in enumerate(spec.legs)] or None,
