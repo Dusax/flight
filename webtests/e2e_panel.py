@@ -201,6 +201,11 @@ try:
         assert len(multi["dates"]) == 3 and len(multi["trip"]["legs"]) == 3, multi
         pg.click("#btn-favs"); pg.wait_for_selector(".fav")
         assert pg.evaluate("location.hash") == "#/favoritos" and pg.locator(".fav").count() == 2
+        # como sair da aba: "Todas as viagens", o próprio botão Favoritos (alterna) e o logo
+        pg.click(".crumb"); pg.wait_for_selector(".tcard"); assert pg.evaluate("location.hash") == "#/"
+        pg.click("#btn-favs"); pg.wait_for_selector(".fav"); pg.click("#btn-favs"); pg.wait_for_selector(".tcard"); assert pg.evaluate("location.hash") == "#/"
+        pg.click("#btn-favs"); pg.wait_for_selector(".fav"); pg.click("a.brand"); pg.wait_for_selector(".tcard"); assert pg.evaluate("location.hash") == "#/"
+        pg.click("#btn-favs"); pg.wait_for_selector(".fav")
         body = pg.inner_text(".favs"); assert "Rio de Janeiro" in body and "Preço quando salvou" in body and "Visto na última coleta" in body, body
         pg.select_option("[data-favsort]", "price"); pg.wait_for_selector(".fav")
         pg.goto(base + "/#/favoritos"); pg.wait_for_selector(".fav"); assert pg.locator(".fav").count() == 2, "favoritos persistem ao recarregar"

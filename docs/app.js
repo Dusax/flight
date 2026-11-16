@@ -258,6 +258,7 @@ function render() {
   $("#btn-all").disabled = !canWrite() || !ws.length;
   $("#btn-new").disabled = !canWrite();
   $("#btn-favs").disabled = !canWrite(); $("#btn-favs").classList.toggle("on", state.view.type === "favs");
+  $("#btn-favs").setAttribute("aria-pressed", state.view.type === "favs"); $("#btn-favs").title = state.view.type === "favs" ? "Voltar para as viagens" : "Voos favoritos";
   $("#fav-count").hidden = !state.favs.length; $("#fav-count").textContent = state.favs.length;
   $("#auth-label").textContent = state.authed ? "Sair" : "Entrar";
   $("#btn-auth use").setAttribute("href", state.authed ? "#i-out" : "#i-in");
@@ -734,7 +735,8 @@ function renderFavs(ws) {
   const by = { recent: (a, b) => b.saved_at.localeCompare(a.saved_at), price: (a, b) => (infos.get(a.id).current ?? a.price) - (infos.get(b.id).current ?? b.price),
     date: (a, b) => a.dates[0].localeCompare(b.dates[0]) || a.saved_at.localeCompare(b.saved_at) };
   sorted.sort(by[state.favSort] || by.recent);
-  $("#view").innerHTML = `<div class="section-title">Voos favoritos <span class="count">${state.favs.length}</span>
+  $("#view").innerHTML = `<button class="btn ghost crumb" data-nav="/">${icon("left")}Todas as viagens</button>
+    <div class="section-title">Voos favoritos <span class="count">${state.favs.length}</span>
       ${state.favs.length > 1 ? `<label class="fav-sort muted small">Ordenar <select data-favsort>${Object.entries(FAV_SORTS).map(([k, t]) => `<option value="${k}" ${state.favSort === k ? "selected" : ""}>${t}</option>`).join("")}</select></label>` : ""}</div>
     ${sorted.length ? `<p class="muted small">Seus voos marcados com a estrela. O preço é atualizado a cada coleta e comparado com o que estava quando você salvou.</p>
       <div class="favs">${sorted.map((f) => favCard(f, ws)).join("")}</div>`
@@ -770,7 +772,8 @@ document.addEventListener("click", (e) => {
     return void guard(async () => { await saveFavs([f, ...state.favs.filter((x) => x.id !== f.id)], "voo restaurado nos favoritos"); render(); }, "Favorito restaurado.");
   }
   if (t.dataset.open === "login") { e.preventDefault(); openLogin(); return; }
-  if (t.dataset.nav) return go(t.dataset.nav);
+  if (t.dataset.nav === "/favoritos" && state.view.type === "favs") return go("/"); // o botão Favoritos alterna
+  if (t.dataset.nav) { if (t.tagName === "A") e.preventDefault(); return go(t.dataset.nav); }
   if (t.dataset.tab) return go(`/viagem/${state.view.id}/${t.dataset.tab}`);
   if (t.dataset.combo) { const [id, i] = t.dataset.combo.split(":").map(Number); state.sel[id] = i; return go(`/viagem/${id}/voos`); }
   if (t.dataset.more) { fltState({ id: +t.dataset.more }).limit += 12; return render(); }
