@@ -6,7 +6,8 @@ from datetime import date, datetime, timedelta, timezone
 from pathlib import Path
 from typing import Dict, Iterable, List, Optional, Tuple
 
-from .models import Leg, ScrapeResult, SearchSpec, legs_from_json, parse_date, parse_iata, plan_specs
+from .models import (MAX_COMBOS, Leg, ScrapeResult, SearchSpec, combo_dates, legs_from_json, normalize_ends,
+                     parse_date, parse_iata, plan_specs)
 
 SCHEMA = """
 CREATE TABLE IF NOT EXISTS watches (
@@ -21,6 +22,7 @@ CREATE TABLE IF NOT EXISTS watches (
     cabin        TEXT NOT NULL DEFAULT 'economy',
     max_stops    INTEGER,
     currency     TEXT NOT NULL DEFAULT 'BRL',
+    date_ranges  TEXT,                    -- fim do período de cada trecho: ["2026-12-25", null, ...] (NULL = sem período)
     every_hours  INTEGER,                 -- frequência da coleta agendada; NULL = só manual
     legs_json    TEXT,                    -- multi-destino: [{origin,destination,date}, ...]
     compare_separate INTEGER NOT NULL DEFAULT 0,  -- também busca cada trecho como só ida
@@ -110,7 +112,7 @@ def _migrate(conn) -> None:
     """Bancos criados por versões anteriores ganham as colunas novas."""
     wanted = {
         "watches": {"every_hours": "INTEGER", "legs_json": "TEXT", "compare_separate": "INTEGER NOT NULL DEFAULT 0",
-                    "booking_top": "INTEGER NOT NULL DEFAULT 0"},
+                    "booking_top": "INTEGER NOT NULL DEFAULT 0", "date_ranges": "TEXT"},
         "searches": {"min_nonstop": "REAL", "fastest_min": "INTEGER", "legs_json": "TEXT", "leg_index": "INTEGER"},
         "offers": {"cabin": "TEXT", "aircraft": "TEXT", "co2_kg": "INTEGER", "co2_diff_pct": "INTEGER",
                    "overnight": "INTEGER", "often_delayed": "INTEGER", "segments_json": "TEXT", "booking_json": "TEXT"},
@@ -125,20 +127,52 @@ def _migrate(conn) -> None:
 
 # --- watches ---------------------------------------------------------------
 
+def ends_to_json(ends) -> Optional[str]:
+    ends = tuple(ends or ())
+    return json.dumps([e.isoformat() if e else None for e in ends]) if any(ends) else None
+
+
+def watch_ends(row) -> tuple:
+    """Fim do período de cada trecho da busca (None = sem período), alinhado a `all_legs()`."""
+    spec = watch_to_spec(row)
+    raw = row["date_ranges"] if "date_ranges" in row.keys() else None
+    ends = [date.fromisoformat(x) if x else None for x in json.loads(raw)] if raw else []
+    return normalize_ends(spec, ends + [None] * (len(spec.all_legs()) - len(ends)))
+
+
+def watch_plan(row, today: Optional[date] = None, include_past: bool = False) -> List[SearchSpec]:
+    """Todas as consultas de uma busca monitorada (datas flexíveis ou período, e trechos separados)."""
+    return plan_specs(watch_to_spec(row), row["flex_days"], bool(row["compare_separate"]), today,
+                      include_past, ends=watch_ends(row))
+
+
 def add_watch(conn, spec: SearchSpec, flex_days: int = 0, label: Optional[str] = None,
-              every_hours: Optional[int] = None, compare_separate: bool = False, booking_top: int = 0) -> int:
+              every_hours: Optional[int] = None, compare_separate: bool = False, booking_top: int = 0,
+              ends=None) -> int:
+    ends = normalize_ends(spec, ends)
+    check_plan(spec, flex_days, ends)
     cur = conn.execute(
         """INSERT INTO watches (label, origin, destination, depart_date, return_date, flex_days,
                                 adults, cabin, max_stops, currency, every_hours, legs_json, compare_separate,
-                                booking_top, created_at)
-           VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)""",
+                                booking_top, date_ranges, created_at)
+           VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)""",
         (label, spec.origin, spec.destination, spec.depart_date.isoformat(),
          spec.return_date.isoformat() if spec.return_date else None, flex_days,
          spec.adults, spec.cabin, spec.max_stops, spec.currency, every_hours, spec.legs_json,
-         int(compare_separate), booking_top, utcnow()),
+         int(compare_separate), booking_top, ends_to_json(ends), utcnow()),
     )
     conn.commit()
     return cur.lastrowid
+
+
+def check_plan(spec: SearchSpec, flex: int, ends) -> None:
+    """Recusa períodos que misturam com ± dias ou geram consultas demais."""
+    if any(ends) and flex:
+        raise ValueError("use período de datas ou ± dias flexíveis, não os dois")
+    if any(ends):
+        n = len(combo_dates(spec, ends, include_past=True, limit=MAX_COMBOS))
+        if n > MAX_COMBOS:
+            raise ValueError(f"o período gera mais de {MAX_COMBOS} combinações de datas; reduza os períodos")
 
 
 def list_watches(conn, only_active: bool = False) -> List[sqlite3.Row]:
@@ -321,6 +355,17 @@ def _spec_from_item(it: dict) -> SearchSpec:
                       return_date=parse_date(it["return_date"]) if it.get("return_date") else None, **common)
 
 
+def _ends_from_item(it: dict, spec: SearchSpec) -> tuple:
+    """Fim do período de cada trecho: `depart_to`/`return_to` (ida, ida e volta) ou `legs[].date_to`."""
+    if it.get("legs"):
+        raw = [l.get("date_to") for l in it["legs"]]
+    elif spec.return_date:
+        raw = [it.get("depart_to"), it.get("return_to")]
+    else:
+        raw = [it.get("depart_to")]
+    return normalize_ends(spec, [parse_date(x) if x else None for x in raw])
+
+
 def sync_watches(conn, items: List[dict]) -> Tuple[int, List[str]]:
     """Faz a tabela `watches` espelhar a lista do JSON (por id). Devolve (qtd, avisos).
 
@@ -334,10 +379,12 @@ def sync_watches(conn, items: List[dict]) -> Tuple[int, List[str]]:
             wid = int(it["id"])
             spec = _spec_from_item(it)
             flex = int(it.get("flex_days") or 0)
+            ends = _ends_from_item(it, spec)
             every = int(it["every_hours"]) if it.get("every_hours") else None
             booking_top = int(it.get("booking_top") or 0)
             if not 0 <= flex <= 7:
                 raise ValueError("flex_days deve ficar entre 0 e 7")
+            check_plan(spec, flex, ends)
             if every is not None and every < 1:
                 raise ValueError("every_hours deve ser >= 1")
             if not 0 <= booking_top <= 10:
@@ -348,16 +395,16 @@ def sync_watches(conn, items: List[dict]) -> Tuple[int, List[str]]:
         vals = (spec.origin, spec.destination, spec.depart_date.isoformat(),
                 spec.return_date.isoformat() if spec.return_date else None, flex, spec.adults, spec.cabin,
                 spec.max_stops, spec.currency, every, spec.legs_json, int(bool(it.get("compare_separate"))),
-                booking_top, int(it.get("active", True)), (it.get("label") or None))
+                booking_top, int(it.get("active", True)), (it.get("label") or None), ends_to_json(ends))
         exists = conn.execute("SELECT 1 FROM watches WHERE id = ?", (wid,)).fetchone()
         if exists:
             conn.execute("""UPDATE watches SET origin=?, destination=?, depart_date=?, return_date=?, flex_days=?,
                             adults=?, cabin=?, max_stops=?, currency=?, every_hours=?, legs_json=?,
-                            compare_separate=?, booking_top=?, active=?, label=? WHERE id=?""", vals + (wid,))
+                            compare_separate=?, booking_top=?, active=?, label=?, date_ranges=? WHERE id=?""", vals + (wid,))
         else:
             conn.execute("""INSERT INTO watches (origin, destination, depart_date, return_date, flex_days, adults,
                             cabin, max_stops, currency, every_hours, legs_json, compare_separate, booking_top,
-                            active, label, id, created_at) VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)""",
+                            active, label, date_ranges, id, created_at) VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)""",
                          vals + (wid, utcnow()))
         keep.append(wid)
     if keep:
@@ -472,7 +519,8 @@ def build_dashboard(conn, today: Optional[date] = None) -> Dict:
         last_attempt = _last_attempt(conn, w["id"])
         compare = bool(w["compare_separate"])
         combos = []
-        for trip in plan_specs(spec, w["flex_days"], compare, today):
+        ends = watch_ends(w)
+        for trip in watch_plan(w, today):
             if trip.leg_index is not None:
                 continue
             rows = _rows_for(conn, w["id"], trip)
@@ -494,14 +542,18 @@ def build_dashboard(conn, today: Optional[date] = None) -> Dict:
                 "offers": _offers_for(conn, cur["id"], OFFERS_PER_COMBO),
                 "separate": _separate(conn, w["id"], trip, cur["min_price"]) if compare and len(trip.all_legs()) > 1 else None,
             })
-        dep_last = spec.depart_date + timedelta(days=w["flex_days"])  # última data de ida possível
+        dep_last = ends[0] or spec.depart_date + timedelta(days=w["flex_days"])  # última data de ida possível
         out_watches.append({
             "id": w["id"], "label": w["label"], "origin": w["origin"], "destination": w["destination"],
             "depart_date": w["depart_date"], "return_date": w["return_date"], "flex_days": w["flex_days"],
             "adults": w["adults"], "cabin": w["cabin"], "max_stops": w["max_stops"], "currency": w["currency"],
             "every_hours": w["every_hours"], "active": bool(w["active"]),
             "trip_type": spec.trip_type, "route": spec.route(),
-            "legs": [{"origin": l.origin, "destination": l.destination, "date": l.date.isoformat()} for l in spec.legs] or None,
+            "legs": [{"origin": l.origin, "destination": l.destination, "date": l.date.isoformat(),
+                      "date_to": ends[i].isoformat() if ends[i] else None} for i, l in enumerate(spec.legs)] or None,
+            "depart_to": ends[0].isoformat() if ends[0] else None,
+            "return_to": ends[1].isoformat() if spec.return_date and ends[1] else None,
+            "n_queries": len(watch_plan(w, today)),
             "compare_separate": compare, "booking_top": w["booking_top"],
             "expired": dep_last < today,
             "last_run_at": last, "next_run_at": next_run_at(w, last),

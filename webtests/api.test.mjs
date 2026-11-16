@@ -4,7 +4,7 @@ import { createServer, listen } from "./server.mjs";
 import { makeFakeGithub } from "./fake-github.mjs";
 import { loginLimiter, makeSession, verifySession, loadConfig } from "../api/_lib/auth.js";
 import { _clearBranchCache } from "../api/_lib/github.js";
-import { normalizeWatch, normalizeWatches } from "../api/_lib/validate.js";
+import { normalizeWatch, normalizeWatches, countCombos } from "../api/_lib/validate.js";
 
 const GH_TOKEN = "github_pat_SEGREDO_DO_SERVIDOR_1234567890";
 const PASSWORD = "uma-senha-bem-longa-123";
@@ -248,4 +248,25 @@ test("respostas da API não são cacheáveis; a página tem CSP sem conexões ex
   const app = await (await fetch(base + "/app.js")).text();
   assert.ok(!/github_pat_|api\.github\.com/.test(html + app), "a página não deve mais conhecer o GitHub");
   assert.ok(!/\sstyle\s*=\s*["']/.test(html + app), "sem atributo style= (a CSP bloquearia)");
+});
+
+test("normalizeWatch: período de datas (ida, volta e por trecho) com os dois extremos", () => {
+  const one = watch({ flex_days: 0, return_date: null }); // 2027-02-10, só ida
+  const w = normalizeWatch({ ...watch({ flex_days: 0 }), depart_to: "2027-02-12", return_to: "2027-02-22" }); // ida 10-12, volta 20-22
+  assert.equal(w.depart_to, "2027-02-12"); assert.equal(w.return_to, "2027-02-22"); assert.equal(w.flex_days, 0);
+  assert.equal(countCombos(["2027-02-10", "2027-02-20"], ["2027-02-12", "2027-02-22"]), 9); // 3 idas x 3 voltas
+  assert.equal(normalizeWatch({ ...one, depart_to: "2027-02-10" }).depart_to, null); // fim = início: sem período
+  const legs = [{ origin: "GRU", destination: "ROM", date: "2027-03-10", date_to: "2027-03-12" }, { origin: "ROM", destination: "VCE", date: "2027-03-15", date_to: "2027-03-16" }];
+  const m = normalizeWatch({ ...one, origin: "gru", destination: "rom", depart_date: "2027-03-10", legs });
+  assert.deepEqual(m.legs.map((l) => l.date_to), ["2027-03-12", "2027-03-16"]); assert.equal(m.depart_to, "2027-03-12");
+  assert.equal(countCombos(m.legs.map((l) => l.date), m.legs.map((l) => l.date_to)), 6);
+});
+
+test("normalizeWatch: recusa período inválido, grande demais ou junto com ± dias", () => {
+  const one = watch({ flex_days: 0, return_date: null });
+  assert.throws(() => normalizeWatch({ ...one, depart_to: "2027-02-01" }), /antes do início/);
+  assert.throws(() => normalizeWatch({ ...one, depart_to: "2027-06-30" }), /no máximo 60 dias/);
+  assert.throws(() => normalizeWatch({ ...one, depart_to: "2027-02-15", flex_days: 2 }), /não os dois/);
+  assert.throws(() => normalizeWatch({ ...one, return_date: "2027-03-01", depart_to: "2027-03-10", return_to: "2027-04-15" }), /mais de 60 combinações/);
+  assert.throws(() => normalizeWatch({ ...one, depart_to: "15/02/2027" }), /inválido/);
 });

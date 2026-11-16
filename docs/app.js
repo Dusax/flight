@@ -184,13 +184,24 @@ function routeViz(w, lg) {
 }
 const cityLine = (w) => routeCodes(w).map(cityOf).join(" → ");
 const kindLabel = (w) => (isMulti(w) ? "Multi-destino" : w.return_date ? "Ida e volta" : "Só ida");
+const spanText = (a, b) => {
+  if (!b || b === a) return fmtDayShort(a);
+  const A = isoToDate(a), B = isoToDate(b);
+  return A.getMonth() === B.getMonth() ? `${A.getDate()} a ${fmtDayShort(b)}` : `${fmtDayShort(a)} a ${fmtDayShort(b)}`; // "1 a 3 de jun"
+};
 function dateChipText(w) {
-  if (isMulti(w)) return `${fmtDayShort(w.legs[0].date)} → ${fmtDay(w.legs[w.legs.length - 1].date)}`;
-  return w.return_date ? `${fmtDayShort(w.depart_date)} → ${fmtDay(w.return_date)}` : fmtDay(w.depart_date);
+  if (isMulti(w)) { const last = w.legs[w.legs.length - 1]; return `${fmtDayShort(w.legs[0].date)} → ${fmtDay(last.date_to || last.date)}`; }
+  if (w.return_date) return `${fmtDayShort(w.depart_date)} → ${fmtDay(w.return_to || w.return_date)}`;
+  return w.depart_to ? `${fmtDayShort(w.depart_date)} a ${fmtDay(w.depart_to)}` : fmtDay(w.depart_date);
 }
+/* datas por extenso, com os períodos: "Ida 5 a 10 dez · Volta 20 a 25 dez" */
+const datesDetail = (w) => (isMulti(w) ? w.legs.map((l) => `${l.origin}→${l.destination} ${spanText(l.date, l.date_to)}`).join(" · ")
+  : w.return_date ? `Ida ${spanText(w.depart_date, w.depart_to)} · Volta ${spanText(w.return_date, w.return_to)}`
+  : hasRange(w) ? `Ida ${spanText(w.depart_date, w.depart_to)}` : dateChipText(w));
 function metaChips(w) {
   const out = [`<span class="chip brand">${esc(kindLabel(w))}</span>`, `<span class="chip">${icon("cal")}${esc(dateChipText(w))}</span>`];
   if (w.flex_days) out.push(`<span class="chip">± ${w.flex_days} dia${w.flex_days > 1 ? "s" : ""}</span>`);
+  if (hasRange(w)) out.push(`<span class="chip">${icon("cal")}Período de datas</span>`);
   out.push(`<span class="chip">${icon("user")}${w.adults} adulto${w.adults > 1 ? "s" : ""}</span>`, `<span class="chip">${esc(CABINS[w.cabin] || w.cabin)}</span>`);
   if (w.max_stops != null) out.push(`<span class="chip">${w.max_stops === 0 ? "Só direto" : `Até ${w.max_stops} escala${w.max_stops > 1 ? "s" : ""}`}</span>`);
   return out.join("");
@@ -209,6 +220,7 @@ const inHours = (ts) => {
   if (s < 86400) return `em ${Math.round(s / 3600)} h`;
   return `em ${Math.round(s / 86400)} d`;
 };
+const hasRange = (w) => !!(w.depart_to || w.return_to || (w.legs || []).some((l) => l.date_to));
 const failed = (w) => !!w.last_status && !["ok", "empty"].includes(w.last_status);
 const failTitle = (w) => `${w.last_status === "blocked" ? "Bloqueada pelo Google" : "Falhou"}${w.last_total > 1 ? ` (${w.last_failed} de ${w.last_total} consultas)` : ""}`;
 const failCause = (w) => (w.last_status === "blocked"
@@ -490,7 +502,7 @@ function dateTile(w, x, i, sel, combos) {
     <span class="dp num">${money(x.min_price, w.currency)}</span><span class="dx">${x.min_price === lo ? "Menor preço" : `+${money(x.min_price - lo, w.currency)}`}</span></button>`;
 }
 function paneDatas(w, c) {
-  const sorted = w.combos.map((x, i) => [x, i]).sort((a, b) => a[0].depart_date.localeCompare(b[0].depart_date));
+  const sorted = w.combos.map((x, i) => [x, i]).sort((a, b) => a[0].depart_date.localeCompare(b[0].depart_date) || (a[0].end_date || "").localeCompare(b[0].end_date || ""));
   const lo = Math.min(...w.combos.map((x) => x.min_price));
   const best = w.combos.find((x) => x.min_price === lo);
   return `<p class="muted">Menor preço em cada data comparada. Clique numa data para ver os voos dela. A mais barata é <b>${esc(dateSpan(best))}</b> (${money(lo, w.currency)}).</p>
@@ -578,8 +590,9 @@ function configPanel(w) {
   const every = w.every_hours ? (EVERY[w.every_hours] || `a cada ${w.every_hours} h`) : "só quando você pedir";
   return `<section class="panel panel-pad"><div class="kv">
     ${kv("Tipo", esc(kindLabel(w)))}${kv("Trajeto", esc(isMulti(w) ? cityLine(w) : `${cityOf(w.origin)} → ${cityOf(w.destination)}`))}
-    ${kv("Datas", esc(isMulti(w) ? w.legs.map((l) => `${l.origin}→${l.destination} ${fmtDayShort(l.date)}`).join(" · ") : dateChipText(w)))}
-    ${kv("Datas flexíveis", w.flex_days ? `± ${w.flex_days} dia${w.flex_days > 1 ? "s" : ""}` : "só a data escolhida")}
+    ${kv("Datas", esc(datesDetail(w)))}
+    ${hasRange(w) ? kv("Período de datas", `todas as combinações dentro dos períodos, dias inicial e final incluídos${w.n_queries ? ` (${w.n_queries} consulta${w.n_queries > 1 ? "s" : ""} por coleta)` : ""}`)
+      : kv("Datas flexíveis", w.flex_days ? `± ${w.flex_days} dia${w.flex_days > 1 ? "s" : ""}` : "só a data escolhida")}
     ${kv("Passageiros", `${w.adults} adulto${w.adults > 1 ? "s" : ""}`)}${kv("Classe", esc(CABINS[w.cabin] || w.cabin))}
     ${kv("Escalas", w.max_stops == null ? "qualquer" : w.max_stops === 0 ? "só direto" : `até ${w.max_stops}`)}
     ${kv("Coleta automática", esc(every))}${kv("Detalhar compra", w.booking_top ? `dos ${w.booking_top} mais baratos (só ida)` : "não")}
@@ -728,12 +741,14 @@ const legRows = () => [...document.querySelectorAll("#legs .leg-row")];
 function legRow(v = {}) {
   const row = document.createElement("div"); row.className = "leg-row";
   row.innerHTML = `${pickerHtml("leg-o", "Origem do trecho", "De onde? (cidade ou código)")}${pickerHtml("leg-d", "Destino do trecho", "Para onde? (cidade ou código)")}
-    <input class="leg-date" type="date" aria-label="Data do trecho" min="${todayIso()}">
+    <label class="leg-d8 leg-datewrap"><span class="mini">Data</span><input class="leg-date" type="date" aria-label="Data do trecho" min="${todayIso()}"></label>
+    <label class="leg-d8 leg-towrap" hidden><span class="mini">Até</span><input class="leg-to" type="date" aria-label="Data final do período do trecho" min="${todayIso()}"></label>
     <button type="button" class="btn sm leg-x" aria-label="Remover trecho">✕</button>`;
   initPickers(row);
   if (v.origin) pickerSet(row.querySelector(".leg-o"), v.origin);
   if (v.destination) pickerSet(row.querySelector(".leg-d"), v.destination);
   row.querySelector(".leg-date").value = v.date || "";
+  row.querySelector(".leg-to").value = v.date_to || "";
   return row;
 }
 function refreshLegs() {
@@ -764,26 +779,90 @@ $("#legs").addEventListener("airport-selected", (e) => { // o destino de um trec
 });
 initPickers($("#simple-fields"));
 
+/* ---- período de datas: contagem de consultas (espelha api/_lib/validate.js e flights/models.py) ---- */
+const MAX_COMBOS = 60, MAX_RANGE_DAYS = 60;
+const addDays = (iso, n) => new Date(Date.parse(`${iso}T00:00:00Z`) + n * 86400000).toISOString().slice(0, 10);
+const daysBetween = (a, b) => Math.round((Date.parse(`${b}T00:00:00Z`) - Date.parse(`${a}T00:00:00Z`)) / 86400000);
+function countCombos(starts, ends) {
+  const spans = starts.map((s, i) => Array.from({ length: daysBetween(s, ends[i] || s) + 1 }, (_, k) => addDays(s, k)));
+  let n = 0;
+  const walk = (i, prev) => {
+    if (i === spans.length) { n += 1; return n <= MAX_COMBOS; }
+    for (const d of spans[i]) { if (prev && d < prev) continue; if (!walk(i + 1, d)) return false; }
+    return true;
+  };
+  walk(0, null);
+  return n;
+}
+const useRange = () => formW.use_range.checked;
+/* datas do formulário no formato [{start, end}], uma por trecho; null se faltar data */
+function formDates() {
+  const kind = formW.trip.value, rg = useRange(), v = (el) => el.value || "";
+  let items;
+  if (kind === "multi") items = legRows().map((r) => ({ start: v(r.querySelector(".leg-date")), end: rg ? v(r.querySelector(".leg-to")) : "" }));
+  else {
+    items = [{ start: v(formW.depart_date), end: rg ? v(formW.depart_to) : "" }];
+    if (kind === "round") items.push({ start: v(formW.return_date), end: rg ? v(formW.return_to) : "" });
+  }
+  return items;
+}
+function planInfo() {
+  const box = $("#plan-info"), items = formDates();
+  const set = (msg, bad) => { box.hidden = !msg; box.className = `plan-info${bad ? " bad" : ""}`; box.textContent = msg || ""; return !bad; };
+  if (!useRange()) {
+    const fx = +formW.flex_days.value || 0;
+    return set(fx ? `Vai consultar ${2 * fx + 1} datas (± ${fx} dia${fx > 1 ? "s" : ""}) a cada coleta.` : "", false);
+  }
+  if (items.some((i) => !i.start)) return set("", false);
+  for (const [n, i] of items.entries()) {
+    const nome = formW.trip.value === "multi" ? `Trecho ${n + 1}` : n ? "Volta" : "Ida";
+    if (i.end && i.end < i.start) return set(`${nome}: o fim do período é antes do início.`, true);
+    if (i.end && daysBetween(i.start, i.end) + 1 > MAX_RANGE_DAYS) return set(`${nome}: o período pode ter no máximo ${MAX_RANGE_DAYS} dias.`, true);
+  }
+  const ends = items.map((i) => (i.end && i.end !== i.start ? i.end : null));
+  if (!ends.some(Boolean)) return set("Preencha o fim do período em pelo menos um trecho (ou desmarque “Pesquisar um período”).", false);
+  const starts = items.map((i) => i.start), n = countCombos(starts, ends);
+  if (n > MAX_COMBOS) return set(`O período gera mais de ${MAX_COMBOS} combinações de datas, e cada uma é uma consulta ao Google. Reduza os períodos.`, true);
+  return set(`Vai consultar ${n} combinaç${n > 1 ? "ões" : "ão"} de datas a cada coleta${formW.compare_separate.checked && formW.trip.value !== "oneway" ? " (mais os trechos separados)" : ""}.`, false);
+}
+["input", "change"].forEach((ev) => formW.addEventListener(ev, (e) => { if (e.target.matches("[type=date], [name=flex_days], [name=use_range], [name=compare_separate], [name=trip]")) planInfo(); }));
+$("#legs").addEventListener("input", planInfo);
+
 function syncTrip() {
-  const kind = formW.trip.value, multi = kind === "multi", round = kind === "round";
+  const kind = formW.trip.value, multi = kind === "multi", round = kind === "round", rg = useRange();
+  formW.querySelectorAll(".lbl").forEach((l) => { l.textContent = rg ? l.dataset.range : l.dataset.plain; });
+  $("#range-row").hidden = multi || !rg; $("#return-to-wrap").hidden = !round;
+  formW.depart_to.disabled = multi || !rg; formW.return_to.disabled = !round || !rg;
+  $("#legs").classList.toggle("ranged", rg);
+  legRows().forEach((r) => { r.querySelector(".leg-towrap").hidden = !rg; });
+  $("#flex-wrap").hidden = rg; formW.flex_days.disabled = rg;
+  planInfo();
   $("#simple-fields").hidden = multi; $("#legs-wrap").hidden = !multi; $("#return-wrap").hidden = !round;
   $("#cmp-wrap").hidden = kind === "oneway";
   for (const n of ["origin", "destination", "depart_date"]) { formW[n].disabled = multi; formW[n].required = !multi; }
   formW.return_date.disabled = !round; formW.return_date.required = round;
-  legRows().forEach((r) => r.querySelectorAll("input").forEach((i) => { i.disabled = !multi; i.required = multi; }));
+  legRows().forEach((r) => r.querySelectorAll("input").forEach((i) => { i.disabled = !multi; i.required = multi && !i.classList.contains("leg-to"); }));
 }
 formW.querySelectorAll("[name=trip]").forEach((r) => r.addEventListener("change", syncTrip));
+formW.use_range.addEventListener("change", () => {
+  if (useRange()) { // sugere um fim de período a partir do que já está preenchido
+    const fill = (a, b) => { if (a.value && !b.value) b.value = addDays(a.value, 6); };
+    if (formW.trip.value !== "multi") { fill(formW.depart_date, formW.depart_to); fill(formW.return_date, formW.return_to); }
+  }
+  syncTrip();
+});
 
 function openWatchDialog(w) {
   state.editingId = w ? w.id : null;
   formW.reset(); $("#watch-err").textContent = "";
   $("#dlg-watch-title").textContent = w ? `Editar viagem ${routeText(w)}` : "Nova viagem";
-  formW.depart_date.min = todayIso(); formW.return_date.min = todayIso();
+  formW.depart_date.min = todayIso(); formW.return_date.min = todayIso(); formW.depart_to.min = todayIso(); formW.return_to.min = todayIso();
   pickerSet(formW.origin, ""); pickerSet(formW.destination, "");
   setLegs(w && isMulti(w) ? w.legs : null);
   if (w) {
     formW.label.value = w.label || ""; formW.trip.value = isMulti(w) ? "multi" : w.return_date ? "round" : "oneway";
-    if (!isMulti(w)) { pickerSet(formW.origin, w.origin); pickerSet(formW.destination, w.destination); formW.depart_date.value = w.depart_date; formW.return_date.value = w.return_date || ""; }
+    if (!isMulti(w)) { pickerSet(formW.origin, w.origin); pickerSet(formW.destination, w.destination); formW.depart_date.value = w.depart_date; formW.return_date.value = w.return_date || ""; formW.depart_to.value = w.depart_to || ""; formW.return_to.value = w.return_to || ""; }
+    formW.use_range.checked = hasRange(w);
     formW.adults.value = w.adults; formW.cabin.value = w.cabin; formW.max_stops.value = w.max_stops ?? "";
     formW.flex_days.value = String(w.flex_days || 0); formW.every_hours.value = w.every_hours ? String(w.every_hours) : "";
     formW.compare_separate.checked = !!w.compare_separate; formW.booking_top.value = String(w.booking_top ?? 0);
@@ -806,7 +885,8 @@ formW.addEventListener("submit", async (e) => {
     active: state.editingId != null ? (state.watches.find((w) => w.id === state.editingId)?.active ?? true) : true,
   };
   if (kind === "multi") {
-    const legs = legRows().map((r) => ({ origin: pickerValue(r.querySelector(".leg-o")), destination: pickerValue(r.querySelector(".leg-d")), date: r.querySelector(".leg-date").value }));
+    const legs = legRows().map((r) => ({ origin: pickerValue(r.querySelector(".leg-o")), destination: pickerValue(r.querySelector(".leg-d")), date: r.querySelector(".leg-date").value,
+      date_to: useRange() ? r.querySelector(".leg-to").value || null : null }));
     if (legs.length < 2) return fail("Multi-destino precisa de pelo menos 2 trechos.");
     for (const [i, l] of legs.entries()) {
       if (!iata(l.origin)) return fail(`Trecho ${i + 1}: escolha o aeroporto de origem na lista (digite a cidade ou o código).`);
@@ -817,11 +897,17 @@ formW.addEventListener("submit", async (e) => {
     Object.assign(item, { legs, origin: legs[0].origin, destination: legs[0].destination, depart_date: legs[0].date });
   } else {
     Object.assign(item, { origin: pickerValue(formW.origin), destination: pickerValue(formW.destination),
-      depart_date: f.get("depart_date"), return_date: kind === "round" ? f.get("return_date") : null });
+      depart_date: f.get("depart_date"), return_date: kind === "round" ? f.get("return_date") : null,
+      depart_to: useRange() ? f.get("depart_to") || null : null, return_to: useRange() && kind === "round" ? f.get("return_to") || null : null });
     if (!iata(item.origin)) return fail("Escolha o aeroporto de origem na lista (digite a cidade ou o código).");
     if (!iata(item.destination)) return fail("Escolha o aeroporto de destino na lista (digite a cidade ou o código).");
     if (item.origin === item.destination) return fail("Origem e destino não podem ser iguais.");
     if (item.return_date && item.return_date < item.depart_date) return fail("A volta não pode ser antes da ida.");
+  }
+  if (useRange()) {
+    const ends = kind === "multi" ? item.legs.map((l) => l.date_to) : [item.depart_to, item.return_to];
+    if (!ends.some((x) => x && x !== "")) return fail("Informe o fim do período em pelo menos um trecho, ou desmarque “Pesquisar um período de datas”.");
+    if (!planInfo()) return fail($("#plan-info").textContent);
   }
   err.textContent = "";
   const runNow = f.get("run_now") === "on";

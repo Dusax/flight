@@ -21,6 +21,11 @@ frequência de cada uma pelo próprio painel e pode disparar uma coleta na hora.
   mais baratos. O painel diz se o pacote ou o separado compensa, e quanto. Vale para
   ida e volta e multi-destino. Passagens separadas não têm proteção de conexão.
 - **Datas flexíveis (±N dias):** todas as datas da viagem andam juntas.
+- **Período de datas (de X até Y, inclusive):** marque “Pesquisar um período de datas” e escolha o fim do período de cada
+  data. Só ida: uma consulta por dia, de X a Y. Ida e volta: período da ida × período da volta (a volta nunca antes da ida).
+  Multi-destino: cada trecho tem o seu período e entram todas as combinações em que os trechos seguem em ordem.
+  O formulário mostra quantas consultas isso gera por coleta. Limites: 60 dias por período e 60 combinações por viagem
+  (cada combinação é uma consulta ao Google; muitas seguidas de um mesmo IP provocam captcha). Não se mistura com ± dias.
 - Em ida e volta e multi-destino, o Google lista os voos do **1º trecho** com o preço
   **da viagem inteira**; os demais trechos só aparecem depois de escolher o voo no
   site. Para ver os outros trechos, use a comparação por trecho.
@@ -126,6 +131,9 @@ playwright install chromium
 
 flights search GRU LIS 2026-12-20 --return 2026-12-30 --adults 2   # busca agora e grava
 flights search GRU LIS 20/12/2026 --nights 10 --flex 2             # ±2 dias em torno da ida
+flights search GRU LIS 20/12/2026 --depart-to 27/12/2026            # só ida: todos os dias de 20 a 27/12
+flights search GRU LIS 2026-12-20 --return 2027-01-05 --depart-to 2026-12-22 --return-to 2027-01-08   # ida 20-22 × volta 5-8
+flights multi GRU@2026-12-20..2026-12-22 LIS@2026-12-27..2026-12-30 MAD@2027-01-03 GRU           # período em cada trecho
 flights multi GRU@2026-12-20 LIS@2026-12-27 MAD@2027-01-03 GRU --compare-separate
 flights search GRU GIG 2026-12-05 --max-stops 0 --booking 3        # + tela de compra dos 3 mais baratos
 flights watch add GRU GIG 2026-12-05 --max-stops 0 --every 6       # cadastra uma rota

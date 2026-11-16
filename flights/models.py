@@ -9,6 +9,8 @@ from typing import Dict, List, Optional, Tuple
 CABINS = {"economy": 1, "premium": 2, "business": 3, "first": 4}
 IATA_RE = re.compile(r"^[A-Za-z]{3}$")
 MAX_LEGS = 5  # limite do Google Voos para multi-destino
+MAX_COMBOS = 60       # combinações de datas por busca monitorada (cada uma é uma consulta ao Google)
+MAX_RANGE_DAYS = 60   # tamanho máximo do período de um trecho
 
 
 def parse_date(value: str) -> date:
@@ -149,6 +151,17 @@ class SearchSpec:
         return replace(self, depart_date=self.depart_date + d,
                        return_date=self.return_date + d if self.return_date else None, legs=legs)
 
+    def with_dates(self, dates) -> "SearchSpec":
+        """Mesma viagem com uma data para cada trecho (na ordem de `all_legs()`)."""
+        dates = tuple(dates)
+        legs = self.all_legs()
+        if len(dates) != len(legs):
+            raise ValueError("uma data por trecho")
+        if self.legs:
+            return replace(self, depart_date=dates[0],
+                           legs=tuple(Leg(l.origin, l.destination, d) for l, d in zip(self.legs, dates)))
+        return replace(self, depart_date=dates[0], return_date=dates[1] if self.return_date else None)
+
     def leg_specs(self) -> List["SearchSpec"]:
         """Cada trecho como uma busca só de ida (para comparar com o preço do pacote)."""
         return [SearchSpec(l.origin, l.destination, l.date, None, self.adults, self.cabin, self.max_stops,
@@ -160,20 +173,76 @@ class SearchSpec:
                 self.legs_json, self.adults, self.cabin, self.max_stops, self.currency, self.leg_index)
 
 
+def normalize_ends(spec: SearchSpec, ends) -> Tuple[Optional[date], ...]:
+    """Fim do período de cada trecho (None = só a data do trecho). Valida e devolve uma tupla
+    com um item por trecho de `spec.all_legs()`."""
+    legs = spec.all_legs()
+    ends = tuple(ends) if ends else (None,) * len(legs)
+    if len(ends) != len(legs):
+        raise ValueError("informe o fim do período de cada trecho (ou deixe em branco)")
+    out = []
+    for i, (l, e) in enumerate(zip(legs, ends)):
+        if e in (None, "", l.date):
+            out.append(None)
+            continue
+        if e < l.date:
+            raise ValueError(f"trecho {i + 1}: o fim do período ({e.isoformat()}) é antes do início")
+        if (e - l.date).days + 1 > MAX_RANGE_DAYS:
+            raise ValueError(f"trecho {i + 1}: período de no máximo {MAX_RANGE_DAYS} dias")
+        out.append(e)
+    return tuple(out)
+
+
+def combo_dates(spec: SearchSpec, ends=None, today: Optional[date] = None, include_past: bool = False,
+                limit: Optional[int] = None) -> List[Tuple[date, ...]]:
+    """Todas as combinações de datas (uma por trecho) dentro dos períodos, com os dias inicial e final
+    incluídos. Cada trecho respeita o anterior: a data nunca volta no tempo. Sem períodos, é só a
+    data da própria busca. Datas de ida no passado ficam de fora."""
+    today = today or date.today()
+    ends = normalize_ends(spec, ends)
+    legs = spec.all_legs()
+    spans = [[l.date + timedelta(days=k) for k in range(((e or l.date) - l.date).days + 1)] for l, e in zip(legs, ends)]
+    out: List[Tuple[date, ...]] = []
+
+    def walk(i: int, acc: Tuple[date, ...]) -> bool:
+        if i == len(spans):
+            out.append(acc)
+            return limit is None or len(out) <= limit
+        for d in spans[i]:
+            if acc and d < acc[-1]:
+                continue
+            if not include_past and i == 0 and d < today:
+                continue
+            if not walk(i + 1, acc + (d,)):
+                return False
+        return True
+
+    walk(0, ())
+    return out
+
+
 def plan_specs(spec: SearchSpec, flex: int = 0, compare_separate: bool = False,
-               today: Optional[date] = None, include_past: bool = False) -> List[SearchSpec]:
+               today: Optional[date] = None, include_past: bool = False, ends=None) -> List[SearchSpec]:
     """Tudo que precisa ser consultado para uma busca monitorada.
 
-    Para cada data (±`flex` dias) vem a busca do pacote; com `compare_separate` e mais de um
-    trecho, vêm também os trechos como só ida. Datas passadas ficam de fora.
+    Duas formas de variar as datas (não se misturam):
+    - `flex`: todas as datas da viagem andam juntas ±`flex` dias;
+    - `ends`: cada trecho tem um período (da sua data até o fim dado, inclusive) e entram todas as
+      combinações possíveis.
+    Com `compare_separate` e mais de um trecho, vêm também os trechos como só ida (sem repetir).
+    Datas passadas ficam de fora.
     """
     today = today or date.today()
+    ends = normalize_ends(spec, ends)
+    if any(ends) and flex:
+        raise ValueError("use período de datas ou ± dias flexíveis, não os dois")
+    if any(ends):
+        variants = [spec.with_dates(c) for c in combo_dates(spec, ends, today, include_past)]
+    else:
+        variants = [s for s in (spec.shift(d) for d in range(-flex, flex + 1)) if include_past or s.depart_date >= today]
     out: List[SearchSpec] = []
     seen = set()
-    for delta in range(-flex, flex + 1):
-        s = spec.shift(delta)
-        if not include_past and s.depart_date < today:
-            continue
+    for s in variants:
         group = [s]
         if compare_separate and len(s.all_legs()) > 1:
             group += s.leg_specs()

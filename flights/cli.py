@@ -12,7 +12,7 @@ from pathlib import Path
 from typing import Iterable, List, Optional, Tuple
 
 from . import db
-from .models import CABINS, Leg, SearchSpec, parse_date, parse_iata, plan_specs
+from .models import normalize_ends, CABINS, Leg, SearchSpec, parse_date, parse_iata, plan_specs
 from .scraper import BlockedError, FlightScraper, ScrapeError
 
 DEFAULT_DB = "data/flights.db"
@@ -87,9 +87,10 @@ def print_offer_details(rows) -> None:
 
 # --- execução das coletas ---------------------------------------------------
 
-def expand_flex(spec: SearchSpec, flex: int, compare_separate: bool = False) -> List[SearchSpec]:
-    """Tudo a consultar: ±flex dias (todas as datas da viagem andam juntas) e, se pedido, cada trecho como só ida."""
-    return plan_specs(spec, flex, compare_separate)
+def expand_flex(spec: SearchSpec, flex: int, compare_separate: bool = False, ends=None) -> List[SearchSpec]:
+    """Tudo a consultar: ±flex dias (todas as datas da viagem andam juntas) ou um período por trecho
+    (`ends`) e, se pedido, cada trecho como só ida."""
+    return plan_specs(spec, flex, compare_separate, ends=ends)
 
 
 QUIET = False  # --quiet: nada que identifique a busca (rota, datas, preços, mensagens de erro) vai para a tela
@@ -152,6 +153,17 @@ def make_scraper(args) -> FlightScraper:
                          country=args.country)
 
 
+def ends_from_args(args, spec: SearchSpec) -> tuple:
+    """Período dos trechos: `--depart-to`/`--return-to` (ida, ida e volta) ou o que veio nos pontos do multi."""
+    if getattr(args, "stops", None):
+        return parse_stops_ranges(args.stops)[1]
+    to = [parse_date(args.depart_to) if getattr(args, "depart_to", None) else None,
+          parse_date(args.return_to) if getattr(args, "return_to", None) else None]
+    if to[1] and not spec.return_date:
+        raise ValueError("--return-to só vale com --return ou --nights")
+    return normalize_ends(spec, to[:len(spec.all_legs())])
+
+
 def spec_from_args(args) -> SearchSpec:
     dep = parse_date(args.depart)
     ret = parse_date(args.ret) if args.ret else (dep + timedelta(days=args.nights) if args.nights else None)
@@ -168,31 +180,41 @@ def parse_stops(tokens: List[str]) -> List[Leg]:
     Cada ponto leva a data em que você SAI dele; o último é só o aeroporto final (pode ser outro
     que o de origem). Assim também dá para fazer "open jaw".
     """
+    return parse_stops_ranges(tokens)[0]
+
+
+def parse_stops_ranges(tokens: List[str]):
+    """Como `parse_stops`, mas a data pode ser um período: GRU@2026-12-20..2026-12-25 (dias inicial e final
+    incluídos). Devolve (trechos, fim do período de cada trecho)."""
     stops = []
     for i, t in enumerate(tokens):
         if i == len(tokens) - 1:
             if "@" in t:
                 raise ValueError(f"o último ponto ({t!r}) é só o aeroporto final, sem data")
-            stops.append((parse_iata(t), None))
+            stops.append((parse_iata(t), None, None))
         else:
             if "@" not in t:
                 raise ValueError(f"informe a data de saída em {t!r}, ex.: {t}@2026-12-20")
             code, d = t.split("@", 1)
-            stops.append((parse_iata(code), parse_date(d)))
+            a, _, b = d.partition("..")
+            stops.append((parse_iata(code), parse_date(a), parse_date(b) if b else None))
     if len(stops) < 3:
         raise ValueError("multi-destino precisa de pelo menos 2 trechos (3 pontos); para 1 trecho use `search`")
-    return [Leg(stops[i][0], stops[i + 1][0], stops[i][1]) for i in range(len(stops) - 1)]
+    legs = [Leg(stops[i][0], stops[i + 1][0], stops[i][1]) for i in range(len(stops) - 1)]
+    return legs, normalize_ends(SearchSpec.multi(legs), [stops[i][2] for i in range(len(legs))])
 
 
 def multi_spec_from_args(args) -> SearchSpec:
-    return SearchSpec.multi(parse_stops(args.stops), adults=args.adults, cabin=args.cabin, max_stops=args.max_stops,
+    return SearchSpec.multi(parse_stops_ranges(args.stops)[0], adults=args.adults, cabin=args.cabin, max_stops=args.max_stops,
                             currency=args.currency.upper())
 
 
 # --- comandos ---------------------------------------------------------------
 
 def _search_now(args, spec: SearchSpec) -> int:
-    specs = expand_flex(spec, args.flex, args.compare_separate)
+    ends = ends_from_args(args, spec)
+    db.check_plan(spec, args.flex, ends)
+    specs = expand_flex(spec, args.flex, args.compare_separate, ends)
     if not specs:
         print("Todas as datas estão no passado.")
         return 1
@@ -224,7 +246,7 @@ def cmd_run(args) -> int:
         return 1
     items = []
     for r in rows:
-        for s in expand_flex(db.watch_to_spec(r), r["flex_days"], bool(r["compare_separate"])):
+        for s in db.watch_plan(r):
             items.append((r["id"], s, r["booking_top"]))
     if not items:
         print("Todas as datas monitoradas já passaram.")
@@ -270,7 +292,8 @@ def cmd_watch(args) -> int:
     if args.watch_cmd in ("add", "add-multi"):
         spec = spec_from_args(args) if args.watch_cmd == "add" else multi_spec_from_args(args)
         wid = db.add_watch(conn, spec, flex_days=args.flex, label=args.label, every_hours=args.every,
-                           compare_separate=args.compare_separate, booking_top=args.booking)
+                           compare_separate=args.compare_separate, booking_top=args.booking,
+                           ends=ends_from_args(args, spec))
         print(f"Monitoramento #{wid} criado: {spec.label()}"
               + (f" (±{args.flex} dias)" if args.flex else "")
               + (f", a cada {args.every}h" if args.every else ", só manual"))
@@ -281,7 +304,7 @@ def cmd_watch(args) -> int:
             return 0
         print_table(
             ["id", "rota", "ida", "volta/fim", "±dias", "adultos", "classe", "esc. máx", "cada", "extras", "ativo", "nome"],
-            [[r["id"], db.row_route(r), r["depart_date"], db.watch_to_spec(r).end_date.isoformat() if db.watch_to_spec(r).end_date != db.watch_to_spec(r).depart_date else "-", r["flex_days"],
+            [[r["id"], db.row_route(r), r["depart_date"] + (f"…{db.watch_ends(r)[0].isoformat()}" if db.watch_ends(r)[0] else ""), db.watch_to_spec(r).end_date.isoformat() if db.watch_to_spec(r).end_date != db.watch_to_spec(r).depart_date else "-", r["flex_days"],
               r["adults"], r["cabin"], "-" if r["max_stops"] is None else r["max_stops"],
               f"{r['every_hours']}h" if r["every_hours"] else "manual",
               ",".join(x for x in ("separado" if r["compare_separate"] else "", f"compra×{r['booking_top']}" if r["booking_top"] else "") if x) or "-",
@@ -387,6 +410,10 @@ def _add_trip_args(p: argparse.ArgumentParser) -> None:
     g = p.add_mutually_exclusive_group()
     g.add_argument("--return", dest="ret", metavar="DATA", help="data de volta (sem isso: só ida)")
     g.add_argument("--nights", type=int, metavar="N", help="ida e volta com N noites de estadia")
+    p.add_argument("--depart-to", metavar="DATA",
+                   help="período de ida: busca todos os dias de DEPART até DATA, inclusive (não combina com --flex)")
+    p.add_argument("--return-to", metavar="DATA",
+                   help="período de volta: de --return até DATA, inclusive; combina com todas as idas do período")
     _add_common_args(p)
 
 
@@ -403,7 +430,8 @@ def _add_common_args(p: argparse.ArgumentParser) -> None:
 
 def _add_multi_args(p: argparse.ArgumentParser) -> None:
     p.add_argument("stops", nargs="+", metavar="PONTO",
-                   help="GRU@2026-12-20 LIS@2026-12-27 MAD@2027-01-03 GRU  (aeroporto@data de saída; o último é só o aeroporto final)")
+                   help="GRU@2026-12-20 LIS@2026-12-27 MAD@2027-01-03 GRU  (aeroporto@data de saída; o último é só o aeroporto final). "
+                        "Período em qualquer trecho: LIS@2026-12-27..2026-12-31 (dias inicial e final incluídos)")
     _add_common_args(p)
 
 

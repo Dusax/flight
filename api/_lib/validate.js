@@ -6,16 +6,48 @@ const IATA = /^[A-Z]{3}$/;
 const ISO_DATE = /^\d{4}-\d{2}-\d{2}$/;
 const CABINS = new Set(["economy", "premium", "business", "first"]);
 export const MAX_WATCHES = 60;
+export const MAX_COMBOS = 60;      // combinações de datas por busca (cada uma é uma consulta ao Google)
+export const MAX_RANGE_DAYS = 60;  // tamanho máximo do período de um trecho
 
 const isDate = (v) => typeof v === "string" && ISO_DATE.test(v) && !Number.isNaN(Date.parse(v)) && new Date(v).toISOString().slice(0, 10) === v;
 const int = (v, lo, hi) => Number.isInteger(v) && v >= lo && v <= hi;
 
+const DAY = 86_400_000;
+const addDays = (iso, n) => new Date(Date.parse(`${iso}T00:00:00Z`) + n * DAY).toISOString().slice(0, 10);
+const daysBetween = (a, b) => Math.round((Date.parse(`${b}T00:00:00Z`) - Date.parse(`${a}T00:00:00Z`)) / DAY);
+
+// Fim do período de um trecho: vazio (ou igual ao início) = só a data do trecho.
+function periodEnd(start, end, what) {
+  if (end == null || end === "" || end === start) return null;
+  if (!isDate(end)) throw new Error(`${what}: fim do período inválido`);
+  if (end < start) throw new Error(`${what}: o fim do período é antes do início`);
+  if (daysBetween(start, end) + 1 > MAX_RANGE_DAYS) throw new Error(`${what}: período de no máximo ${MAX_RANGE_DAYS} dias`);
+  return end;
+}
+
+// Quantas combinações de datas o período gera (cada trecho respeita o anterior); para ao passar do limite.
+export function countCombos(starts, ends) {
+  const spans = starts.map((s, i) => Array.from({ length: daysBetween(s, ends[i] || s) + 1 }, (_, k) => addDays(s, k)));
+  let n = 0;
+  const walk = (i, prev) => {
+    if (i === spans.length) { n += 1; return n <= MAX_COMBOS; }
+    for (const d of spans[i]) {
+      if (prev && d < prev) continue;
+      if (!walk(i + 1, d)) return false;
+    }
+    return true;
+  };
+  walk(0, null);
+  return n;
+}
+
 function leg(l, i) {
   if (!l || typeof l !== "object") throw new Error(`trecho ${i + 1} inválido`);
-  const o = { origin: String(l.origin || "").toUpperCase(), destination: String(l.destination || "").toUpperCase(), date: l.date };
+  const o = { origin: String(l.origin || "").toUpperCase(), destination: String(l.destination || "").toUpperCase(), date: l.date, date_to: null };
   if (!IATA.test(o.origin) || !IATA.test(o.destination)) throw new Error(`trecho ${i + 1}: use códigos IATA de 3 letras`);
   if (o.origin === o.destination) throw new Error(`trecho ${i + 1}: origem e destino iguais`);
   if (!isDate(o.date)) throw new Error(`trecho ${i + 1}: data inválida`);
+  o.date_to = periodEnd(o.date, l.date_to, `trecho ${i + 1}`);
   return o;
 }
 
@@ -42,6 +74,7 @@ export function normalizeWatch(w) {
     if (!Array.isArray(w.legs) || w.legs.length < 2 || w.legs.length > 5) throw new Error("multi-destino precisa de 2 a 5 trechos");
     out.legs = w.legs.map(leg);
     out.legs.forEach((l, i) => { if (i && l.date < out.legs[i - 1].date) throw new Error(`trecho ${i + 1}: data antes do trecho anterior`); });
+    out.legs.forEach((l, i) => { if (i && l.date_to && l.date_to < out.legs[i - 1].date) throw new Error(`trecho ${i + 1}: período antes do trecho anterior`); });
     if (out.return_date) throw new Error("multi-destino não usa data de volta");
     // o 1º trecho tem de bater com os campos de topo
     const f = out.legs[0];
@@ -49,6 +82,16 @@ export function normalizeWatch(w) {
   } else out.legs = null;
   if (!int(w.flex_days ?? 0, 0, 7)) throw new Error("datas flexíveis: 0 a 7");
   out.flex_days = w.flex_days ?? 0;
+  // período de datas: ida e volta (ou o de cada trecho no multi-destino); não se mistura com ± dias
+  out.depart_to = out.legs ? out.legs[0].date_to : periodEnd(out.depart_date, w.depart_to, "ida");
+  out.return_to = out.return_date ? periodEnd(out.return_date, w.return_to, "volta") : null;
+  if (w.return_to && !out.return_date && !out.legs) throw new Error("período de volta sem data de volta");
+  const starts = out.legs ? out.legs.map((l) => l.date) : [out.depart_date, ...(out.return_date ? [out.return_date] : [])];
+  const ends = out.legs ? out.legs.map((l) => l.date_to) : [out.depart_to, ...(out.return_date ? [out.return_to] : [])];
+  if (ends.some(Boolean)) {
+    if (out.flex_days) throw new Error("use período de datas ou ± dias flexíveis, não os dois");
+    if (countCombos(starts, ends) > MAX_COMBOS) throw new Error(`o período gera mais de ${MAX_COMBOS} combinações de datas; reduza os períodos`);
+  }
   if (!int(w.adults ?? 1, 1, 9)) throw new Error("adultos: 1 a 9");
   out.adults = w.adults ?? 1;
   if (!CABINS.has(w.cabin ?? "economy")) throw new Error("classe inválida");

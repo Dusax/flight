@@ -342,6 +342,15 @@ label.f.check input { width: auto; min-height: 0; }
 .seg-radio label:has(input:checked) { background: var(--brand-soft); border-color: var(--brand); color: var(--brand); }
 .seg-radio input { accent-color: var(--brand); }
 .leg-row { display: grid; grid-template-columns: minmax(0, 1fr) minmax(0, 1fr) 140px 40px; gap: 8px; margin-bottom: 10px; align-items: start; }
+.leg-d8 { display: block; min-width: 0; }
+.leg-d8 .mini { display: none; font-size: 12px; color: var(--text-2); font-weight: 600; margin-bottom: 3px; }
+.ranged .leg-row { grid-template-columns: minmax(0, 1fr) minmax(0, 1fr) 40px; row-gap: 6px; margin-bottom: 14px; }
+.ranged .leg-d8 .mini { display: block; }
+.ranged .leg-row .leg-x { grid-column: 3; grid-row: 1; }
+.ranged .leg-row .leg-datewrap { grid-column: 1; }
+.ranged .leg-row .leg-towrap { grid-column: 2; }
+.plan-info { font-size: 13px; font-weight: 600; color: var(--brand); background: var(--brand-soft); border-radius: 10px; padding: 9px 12px; }
+.plan-info.bad { color: var(--bad); background: var(--bad-soft); }
 .leg-row .leg-x { margin-top: 0; min-height: 40px; }
 .leg-row input { background: var(--surface-2); border: 1px solid var(--line-2); border-radius: 10px; padding: 8px 10px; min-height: 40px; color: var(--text); width: 100%; }
 .toasts { position: fixed; bottom: 18px; left: 50%; transform: translateX(-50%); display: grid; gap: 8px; z-index: 50; width: min(540px, calc(100vw - 24px)); }
@@ -393,7 +402,9 @@ label.f.check input { width: auto; min-height: 0; }
   .leg-row .ac, #simple-fields .row .ac { position: static; }
   .ac-list { left: 0; right: 0; min-width: 0; }
   .leg-row { grid-template-columns: minmax(0, 1fr) minmax(0, 1fr); }
-  .leg-row .leg-date { grid-column: 1 / 2; }
+  .ranged .leg-row { grid-template-columns: minmax(0, 1fr) minmax(0, 1fr); }
+  .ranged .leg-row { border: 1px solid var(--line-2); border-radius: 12px; padding: 10px; }
+  .ranged .leg-row .leg-x { grid-column: 1 / -1; grid-row: 3; justify-self: end; }
 }
 @media (max-width: 400px) {
   .price.lg { font-size: 34px; }

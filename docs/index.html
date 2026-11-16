@@ -74,6 +74,8 @@
       <label><input type="radio" name="trip" value="oneway"> Só ida</label>
       <label><input type="radio" name="trip" value="multi"> Multi-destino</label>
     </div>
+    <label class="f check" id="range-wrap"><span><input type="checkbox" name="use_range"> Pesquisar um período de datas</span>
+      <small>Em vez de uma data só, busca todos os dias de um dia até outro (os dois dias entram). Em cada trecho você escolhe o período dele.</small></label>
     <div id="simple-fields" class="grid-gap">
       <div class="row">
         <div class="f"><label for="f-origin">Origem</label>
@@ -82,8 +84,12 @@
           <div class="ac-field"><div class="ac"><input id="f-dest" name="destination" role="combobox" aria-autocomplete="list" aria-expanded="false" aria-controls="ac-d" autocomplete="off" autocapitalize="off" spellcheck="false" required placeholder="Cidade ou código (ex.: Lisboa, CUZ)"><ul class="ac-list" id="ac-d" role="listbox" hidden></ul></div><small class="ac-hint"></small></div></div>
       </div>
       <div class="row">
-        <label class="f">Ida<input type="date" name="depart_date" required></label>
-        <label class="f" id="return-wrap">Volta<input type="date" name="return_date"></label>
+        <label class="f"><span class="lbl" data-plain="Ida" data-range="Ida: a partir de">Ida</span><input type="date" name="depart_date" required></label>
+        <label class="f" id="return-wrap"><span class="lbl" data-plain="Volta" data-range="Volta: a partir de">Volta</span><input type="date" name="return_date"></label>
+      </div>
+      <div class="row" id="range-row" hidden>
+        <label class="f">Ida: até<input type="date" name="depart_to"></label>
+        <label class="f" id="return-to-wrap">Volta: até<input type="date" name="return_to"></label>
       </div>
     </div>
     <div id="legs-wrap" hidden>
@@ -101,7 +107,7 @@
       </label>
     </div>
     <div class="row">
-      <label class="f">Datas flexíveis
+      <label class="f" id="flex-wrap">Datas flexíveis
         <select name="flex_days"><option value="0">Só essa data</option><option value="1">± 1 dia</option><option value="2">± 2 dias</option><option value="3">± 3 dias</option><option value="7">± 7 dias</option></select>
         <small>Cada dia extra é uma consulta a mais.</small>
       </label>
@@ -114,6 +120,7 @@
         <small>O agendador roda de hora em hora e pode atrasar alguns minutos.</small>
       </label>
     </div>
+    <div class="plan-info" id="plan-info" role="status" aria-live="polite" hidden></div>
     <label class="f check" id="cmp-wrap"><span><input type="checkbox" name="compare_separate"> Comparar com cada trecho comprado separado (só ida)</span>
       <small>Mostra se comprar os trechos soltos sai mais barato que o pacote. Cada trecho vira mais uma consulta.</small></label>
     <label class="f">Detalhar compra (bagagem, vendedor, faixa de preço)

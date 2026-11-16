@@ -135,6 +135,53 @@ try:
         assert pg.locator('.tcard[data-open-trip="5"]').count() == 0 and pg.evaluate("location.hash") == "#/"
         print("12. disparar, pausar e remover funcionam")
 
+        # ---- período de datas (x até y, inclusive) ----
+        pg.click("#btn-new")
+        assert pg.is_hidden("#range-row") and pg.is_visible("#flex-wrap")
+        pg.fill("#f-origin", "GRU"); pg.fill("#f-dest", "LIS")
+        pg.fill(f + "[name=depart_date]", "2027-06-01"); pg.fill(f + "[name=return_date]", "2027-06-10")
+        pg.check(f + "[name=use_range]")
+        assert pg.is_visible("#range-row") and pg.is_hidden("#flex-wrap"), "período esconde o ± dias"
+        assert pg.input_value(f + "[name=depart_to]") == "2027-06-07", "sugere o fim do período"
+        pg.fill(f + "[name=depart_to]", "2027-06-03"); pg.fill(f + "[name=return_to]", "2027-06-12")
+        pg.locator("#plan-info").filter(has_text="9 combinações").wait_for()
+        pg.fill(f + "[name=return_to]", "2027-09-30")  # volta de 112 dias: passa do limite de dias
+        pg.locator("#plan-info.bad").wait_for(); pg.click("#watch-save")
+        assert "máximo" in pg.inner_text("#watch-err") and pg.is_visible("#dlg-watch"), "recusa período grande demais"
+        pg.fill(f + "[name=depart_to]", "2027-06-30"); pg.fill(f + "[name=return_to]", "2027-07-20")
+        pg.locator("#plan-info.bad").filter(has_text="mais de 60").wait_for()
+        pg.fill(f + "[name=depart_to]", "2027-06-03"); pg.fill(f + "[name=return_to]", "2027-06-12")
+        pg.locator("#plan-info:not(.bad)").filter(has_text="9 combinações").wait_for()
+        pg.fill(f + "[name=label]", "Período"); pg.uncheck(f + "[name=run_now]"); pg.click("#watch-save")
+        pg.wait_for_selector('.tcard[data-open-trip="5"]')
+        saved = pg.evaluate("fetch('/api/watches').then(r => r.json())")
+        w5 = next(w for w in saved["list"] if w["id"] == 5)
+        assert w5["depart_to"] == "2027-06-03" and w5["return_to"] == "2027-06-12" and w5["flex_days"] == 0, w5
+        assert "Período de datas" in pg.inner_text('.tcard[data-open-trip="5"]')
+        pg.click('.tcard[data-open-trip="5"]'); pg.wait_for_selector(".trip-head"); pg.click('.tab[data-tab="busca"]')
+        body = pg.inner_text("body"); assert re.search(r"Ida 1 a 3 de jun", body) and re.search(r"Volta 10 a 12 de jun", body), body[:900]
+        pg.click("[data-act=edit]")
+        assert pg.is_checked(f + "[name=use_range]") and pg.input_value(f + "[name=return_to]") == "2027-06-12", "editar traz o período de volta"
+        pg.uncheck(f + "[name=use_range]"); assert pg.is_visible("#flex-wrap") and pg.is_hidden("#range-row")
+        pg.click("#watch-cancel"); pg.click('[data-nav="/"]'); pg.wait_for_selector(".tcard")
+        # multi-destino: cada trecho com o seu período
+        pg.click("#btn-new"); pg.check(f + "[name=trip][value=multi]"); pg.check(f + "[name=use_range]")
+        rows = pg.locator("#legs .leg-row"); assert rows.nth(0).locator(".leg-to").is_visible()
+        for i, (o, d, a, z) in enumerate([("GRU", "ROM", "2027-03-10", "2027-03-12"), ("ROM", "VCE", "2027-03-15", "2027-03-16")]):
+            rows.nth(i).locator(".leg-o").fill(o); rows.nth(i).locator(".leg-d").fill(d)
+            rows.nth(i).locator(".leg-date").fill(a); rows.nth(i).locator(".leg-to").fill(z)
+        pg.locator("#plan-info").filter(has_text="6 combinações").wait_for()  # 3 datas do trecho 1 x 2 do trecho 2
+        pg.uncheck(f + "[name=run_now]"); pg.click("#watch-save")
+        try: pg.wait_for_selector('.tcard[data-open-trip="6"]', timeout=8000)
+        except Exception: raise AssertionError("não salvou: " + pg.inner_text("#watch-err") + " | inválidos: " + str(pg.evaluate("[...document.querySelectorAll('#form-watch :invalid')].map(e => (e.name || e.className) + ':' + e.validationMessage + ':' + e.value)")) + " | " + pg.inner_text("#plan-info") + " | cards: " + str(pg.evaluate("[...document.querySelectorAll('.tcard')].map(e => e.dataset.openTrip)")) + " dlg:" + str(pg.is_visible("#dlg-watch")) + " toasts:" + pg.inner_text("#toasts"))
+        saved = pg.evaluate("fetch('/api/watches').then(r => r.json())")
+        w6 = next(w for w in saved["list"] if w["id"] == 6)
+        assert [l["date_to"] for l in w6["legs"]] == ["2027-03-12", "2027-03-16"], w6
+        for i in (6, 5):
+            pg.click(f'.tcard[data-open-trip="{i}"]'); pg.wait_for_selector(".trip-head")
+            pg.click("[data-act=remove]"); pg.wait_for_selector(".tcard")  # o diálogo de confirmação já é aceito pelo handler do passo 12
+        print("12b. período de datas: ida e volta (9 combinações), limites, multi-destino por trecho, edição")
+
         pg.goto(base + "/#/viagem/1/voos"); pg.wait_for_selector(".fl"); assert not pg.is_visible("#dlg-login")
         print("13. link direto + sessão mantida após recarregar")
         ctx.clear_cookies(); pg.click('[data-nav="/"]'); pg.click('.tcard [data-act=run]')
