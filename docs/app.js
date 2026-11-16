@@ -46,6 +46,7 @@ const state = {
   favSort: "recent",
   lastRemoved: null,      // último favorito removido (para "Desfazer")
   sel: {},                // combinação de datas selecionada por busca
+  datesAll: {},           // por busca: mostrar todas as datas na aba Datas (padrão: as mais baratas)
   open: new Set(),        // cards com a tabela de voos aberta
   sort: {},               // ordenação da tabela de voos por busca
   sortSummary: "price",
@@ -217,6 +218,7 @@ function metaChips(w) {
   const out = [`<span class="chip brand">${esc(kindLabel(w))}</span>`, `<span class="chip">${icon("cal")}${esc(dateChipText(w))}</span>`];
   if (w.flex_days) out.push(`<span class="chip">± ${w.flex_days} dia${w.flex_days > 1 ? "s" : ""}</span>`);
   if (hasRange(w)) out.push(`<span class="chip">${icon("cal")}Período de datas</span>`);
+  if (w.coverage && w.coverage.seen < w.coverage.space) out.push(`<span class="chip" title="Cada coleta consulta até ${w.budget} combinações; as demais entram nas próximas.">Vistas ${w.coverage.seen} de ${w.coverage.space} datas</span>`);
   out.push(`<span class="chip">${icon("user")}${w.adults} adulto${w.adults > 1 ? "s" : ""}</span>`, `<span class="chip">${esc(CABINS[w.cabin] || w.cabin)}</span>`);
   if (w.max_stops != null) out.push(`<span class="chip">${w.max_stops === 0 ? "Só direto" : `Até ${w.max_stops} escala${w.max_stops > 1 ? "s" : ""}`}</span>`);
   return out.join("");
@@ -451,6 +453,7 @@ const AMEN = { "Wi-Fi for a fee": "Wi-Fi pago", "Free Wi-Fi": "Wi-Fi grátis", "
 const LEG = { "Above average": "acima da média", "Average": "média", "Below average": "abaixo da média" };
 
 function paneVoos(w, c) {
+  if (!c.offers.length) return `<div class="panel empty"><p class="muted">Esta data é de um período grande: a lista de voos só fica guardada para as ${DETAILED_COMBOS} combinações mais baratas, para o painel continuar leve. Os preços dela aparecem na aba Datas e no histórico.</p></div>`;
   const f = fltState(w);
   const all = c.offers;
   const cheapest = Math.min(...all.map((o) => o.price)), fastest = Math.min(...all.map((o) => o.duration_min ?? 1e9));
@@ -524,12 +527,20 @@ function dateTile(w, x, i, sel, combos) {
     <span class="dw">${esc(weekday(x.depart_date))}</span><span class="dd">${esc(fmtDayShort(x.depart_date))}${end && end !== x.depart_date ? ` → ${esc(fmtDayShort(end))}` : ""}</span>
     <span class="dp num">${money(x.min_price, w.currency)}</span><span class="dx">${x.min_price === lo ? "Menor preço" : `+${money(x.min_price - lo, w.currency)}`}</span></button>`;
 }
+const DATES_TOP = 24, DETAILED_COMBOS = 20; // espelha DETAILED_COMBOS de flights/db.py
 function paneDatas(w, c) {
-  const sorted = w.combos.map((x, i) => [x, i]).sort((a, b) => a[0].depart_date.localeCompare(b[0].depart_date) || (a[0].end_date || "").localeCompare(b[0].end_date || ""));
+  const byDate = (a, b) => a[0].depart_date.localeCompare(b[0].depart_date) || (a[0].end_date || "").localeCompare(b[0].end_date || "");
+  const all = w.combos.map((x, i) => [x, i]);
   const lo = Math.min(...w.combos.map((x) => x.min_price));
   const best = w.combos.find((x) => x.min_price === lo);
-  return `<p class="muted">Menor preço em cada data comparada. Clique numa data para ver os voos dela. A mais barata é <b>${esc(dateSpan(best))}</b> (${money(lo, w.currency)}).</p>
-    <div class="dates">${sorted.map(([x, i]) => dateTile(w, x, i, c, w.combos)).join("")}</div>`;
+  const many = all.length > DATES_TOP, showAll = !many || state.datesAll?.[w.id];
+  const shown = showAll ? [...all].sort(byDate) : [...all].sort((a, b) => a[0].min_price - b[0].min_price).slice(0, DATES_TOP).sort(byDate);
+  const cov = w.coverage;
+  const covNote = cov && cov.space > (w.budget || 40) ? `<div class="banner">${icon("cal")}<div><b>Período grande: ${cov.seen} de ${cov.space} combinações já consultadas.</b>
+      <div class="muted small">Cada coleta consulta até ${esc(w.budget)} (as mais baratas e as datas vizinhas a elas primeiro, depois uma amostra espalhada do resto). ${cov.seen < cov.space ? `O período inteiro fica visto em cerca de ${cov.runs_left} coleta${cov.runs_left > 1 ? "s" : ""}; use “Buscar agora” para adiantar.` : "O período inteiro já foi visto; as coletas agora renovam as mais baratas e as mais antigas."}</div></div></div>` : "";
+  return `${covNote}<p class="muted">Menor preço em cada data comparada. Clique numa data para ver os voos dela. A mais barata é <b>${esc(dateSpan(best))}</b> (${money(lo, w.currency)}).</p>
+    <div class="dates">${shown.map(([x, i]) => dateTile(w, x, i, c, w.combos)).join("")}</div>
+    ${many ? `<button class="btn more-btn" data-dates-all="${w.id}">${showAll ? `Mostrar só as ${DATES_TOP} mais baratas` : `Mostrar todas as ${all.length} datas`}</button>` : ""}`;
 }
 
 /* ---- histórico ---- */
@@ -614,7 +625,7 @@ function configPanel(w) {
   return `<section class="panel panel-pad"><div class="kv">
     ${kv("Tipo", esc(kindLabel(w)))}${kv("Trajeto", esc(isMulti(w) ? cityLine(w) : `${cityOf(w.origin)} → ${cityOf(w.destination)}`))}
     ${kv("Datas", esc(datesDetail(w)))}
-    ${hasRange(w) ? kv("Período de datas", `todas as combinações dentro dos períodos, dias inicial e final incluídos${w.n_queries ? ` (${w.n_queries} consulta${w.n_queries > 1 ? "s" : ""} por coleta)` : ""}`)
+    ${hasRange(w) ? kv("Período de datas", `todas as combinações dentro dos períodos, dias inicial e final incluídos${w.n_queries ? ` (${w.n_queries} consulta${w.n_queries > 1 ? "s" : ""} por coleta)` : ""}${w.coverage && w.coverage.space > w.budget ? `. Já consultadas: ${w.coverage.seen} de ${w.coverage.space}; cada coleta faz até ${w.budget} (as mais baratas e vizinhas primeiro, depois o resto)` : ""}`)
       : kv("Datas flexíveis", w.flex_days ? `± ${w.flex_days} dia${w.flex_days > 1 ? "s" : ""}` : "só a data escolhida")}
     ${kv("Passageiros", `${w.adults} adulto${w.adults > 1 ? "s" : ""}`)}${kv("Classe", esc(CABINS[w.cabin] || w.cabin))}
     ${kv("Escalas", w.max_stops == null ? "qualquer" : w.max_stops === 0 ? "só direto" : `até ${w.max_stops}`)}
@@ -745,7 +756,8 @@ window.addEventListener("hashchange", () => {
 });
 
 document.addEventListener("click", (e) => {
-  const t = e.target.closest("[data-act],[data-tab],[data-combo],[data-nav],[data-open-trip],[data-open],[data-more],[data-fav],[data-favopen],[data-undo-fav]"); if (!t) return;
+  const t = e.target.closest("[data-act],[data-tab],[data-combo],[data-nav],[data-open-trip],[data-open],[data-more],[data-fav],[data-favopen],[data-undo-fav],[data-dates-all]"); if (!t) return;
+  if (t.dataset.datesAll) { const k = +t.dataset.datesAll; state.datesAll[k] = !state.datesAll[k]; return render(); }
   if (t.dataset.fav) { e.preventDefault(); return void guard(() => toggleFav(t.dataset.fav)); }
   if (t.dataset.favopen) {
     const f = state.favs.find((x) => x.id === t.dataset.favopen), w = f && merged().find((x) => x.id === f.watch_id); if (!w) return;
@@ -900,7 +912,7 @@ $("#legs").addEventListener("airport-selected", (e) => { // o destino de um trec
 initPickers($("#simple-fields"));
 
 /* ---- período de datas: contagem de consultas (espelha api/_lib/validate.js e flights/models.py) ---- */
-const MAX_COMBOS = 60, MAX_RANGE_DAYS = 60;
+const MAX_COMBOS = 2000, MAX_RANGE_DAYS = 60;
 const addDays = (iso, n) => new Date(Date.parse(`${iso}T00:00:00Z`) + n * 86400000).toISOString().slice(0, 10);
 const daysBetween = (a, b) => Math.round((Date.parse(`${b}T00:00:00Z`) - Date.parse(`${a}T00:00:00Z`)) / 86400000);
 function countCombos(starts, ends) {
@@ -941,11 +953,14 @@ function planInfo() {
   }
   const ends = items.map((i) => (i.end && i.end !== i.start ? i.end : null));
   if (!ends.some(Boolean)) return set("Preencha o fim do período em pelo menos um trecho (ou desmarque “Pesquisar um período”).", false);
-  const starts = items.map((i) => i.start), n = countCombos(starts, ends);
-  if (n > MAX_COMBOS) return set(`O período gera mais de ${MAX_COMBOS} combinações de datas, e cada uma é uma consulta ao Google. Reduza os períodos.`, true);
-  return set(`Vai consultar ${n} combinaç${n > 1 ? "ões" : "ão"} de datas a cada coleta${formW.compare_separate.checked && formW.trip.value !== "oneway" ? " (mais os trechos separados)" : ""}.`, false);
+  const starts = items.map((i) => i.start), n = countCombos(starts, ends), budget = +formW.budget.value || 40;
+  const sep = formW.compare_separate.checked && formW.trip.value !== "oneway";
+  if (n > MAX_COMBOS) return set(`O período gera mais de ${MAX_COMBOS} combinações de datas. Reduza os períodos (por exemplo, menos dias no trecho que mais varia).`, true);
+  if (n * (sep ? 2 : 1) <= budget) return set(`Vai consultar as ${n} combinaç${n > 1 ? "ões" : "ão"} de datas a cada coleta${sep ? " (mais os trechos separados)" : ""}.`, false);
+  const runs = Math.max(1, Math.ceil(n / Math.max(1, budget - Math.max(3, Math.floor(budget / 4)))));
+  return set(`O período tem ${n} combinações. Para não sobrecarregar o Google, cada coleta consulta até ${budget}: começa por uma amostra espalhada e, nas seguintes, foca ao redor das mais baratas e cobre o resto (tudo visto em cerca de ${runs} coleta${runs > 1 ? "s" : ""}).`, false);
 }
-["input", "change"].forEach((ev) => formW.addEventListener(ev, (e) => { if (e.target.matches("[type=date], [name=flex_days], [name=use_range], [name=compare_separate], [name=trip]")) planInfo(); }));
+["input", "change"].forEach((ev) => formW.addEventListener(ev, (e) => { if (e.target.matches("[type=date], [name=flex_days], [name=use_range], [name=compare_separate], [name=trip], [name=budget]")) planInfo(); }));
 $("#legs").addEventListener("input", planInfo);
 
 function syncTrip() {
@@ -955,7 +970,7 @@ function syncTrip() {
   formW.depart_to.disabled = multi || !rg; formW.return_to.disabled = !round || !rg;
   $("#legs").classList.toggle("ranged", rg);
   legRows().forEach((r) => { r.querySelector(".leg-towrap").hidden = !rg; });
-  $("#flex-wrap").hidden = rg; formW.flex_days.disabled = rg;
+  $("#flex-wrap").hidden = rg; formW.flex_days.disabled = rg; $("#budget-wrap").hidden = !rg; formW.budget.disabled = !rg;
   planInfo();
   $("#simple-fields").hidden = multi; $("#legs-wrap").hidden = !multi; $("#return-wrap").hidden = !round;
   $("#cmp-wrap").hidden = kind === "oneway";
@@ -982,7 +997,7 @@ function openWatchDialog(w) {
   if (w) {
     formW.label.value = w.label || ""; formW.trip.value = isMulti(w) ? "multi" : w.return_date ? "round" : "oneway";
     if (!isMulti(w)) { pickerSet(formW.origin, w.origin); pickerSet(formW.destination, w.destination); formW.depart_date.value = w.depart_date; formW.return_date.value = w.return_date || ""; formW.depart_to.value = w.depart_to || ""; formW.return_to.value = w.return_to || ""; }
-    formW.use_range.checked = hasRange(w);
+    formW.use_range.checked = hasRange(w); formW.budget.value = String(w.budget || 40);
     formW.adults.value = w.adults; formW.cabin.value = w.cabin; formW.max_stops.value = w.max_stops ?? "";
     formW.flex_days.value = String(w.flex_days || 0); formW.every_hours.value = w.every_hours ? String(w.every_hours) : "";
     formW.compare_separate.checked = !!w.compare_separate; formW.booking_top.value = String(w.booking_top ?? 0);
@@ -998,7 +1013,7 @@ formW.addEventListener("submit", async (e) => {
   const item = {
     id: state.editingId ?? nextId(), label: (f.get("label") || "").trim() || null,
     origin: "", destination: "", depart_date: "", return_date: null, legs: null,
-    flex_days: +f.get("flex_days"), adults: +f.get("adults"), cabin: f.get("cabin"),
+    flex_days: useRange() ? 0 : +f.get("flex_days"), budget: useRange() ? +f.get("budget") : 40, adults: +f.get("adults"), cabin: f.get("cabin"),
     max_stops: f.get("max_stops") === "" ? null : +f.get("max_stops"), currency: "BRL",
     every_hours: f.get("every_hours") ? +f.get("every_hours") : null,
     compare_separate: kind !== "oneway" && formW.compare_separate.checked, booking_top: +f.get("booking_top"),

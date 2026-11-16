@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import argparse
 import csv
+import itertools
 import json
 import os
 import random
@@ -98,7 +99,7 @@ QUIET = False  # --quiet: nada que identifique a busca (rota, datas, preços, me
 
 def run_specs(
     conn, scraper: FlightScraper, items: List[Tuple[Optional[int], SearchSpec, int]], delay: float, top: int,
-    max_offers: Optional[int] = None, detail: int = 30,
+    max_offers: Optional[int] = None, detail: int = 30, deadline: Optional[float] = None,
 ) -> Tuple[int, int]:
     """Coleta cada (watch_id, spec), grava no banco e imprime o resumo. Devolve (ok, falhas).
 
@@ -107,6 +108,9 @@ def run_specs(
     """
     ok = failed = 0
     for i, (watch_id, spec, booking_top) in enumerate(items):
+        if deadline is not None and time.monotonic() > deadline:
+            print(f"\nTempo da execução esgotado: {len(items) - i} consulta(s) ficam para a próxima coleta.")
+            break
         if i:
             time.sleep(delay * (0.75 + random.random() * 0.5))  # pausa irregular entre buscas
         if QUIET:
@@ -244,16 +248,17 @@ def cmd_run(args) -> int:
     elif not rows:
         print("Nenhuma busca monitorada ativa. Cadastre com: flights watch add ORIGEM DESTINO DATA ...")
         return 1
-    items = []
-    for r in rows:
-        for s in db.watch_plan(r):
-            items.append((r["id"], s, r["booking_top"]))
+    plans = [[(r["id"], s, r["booking_top"]) for s in db.watch_run_plan(conn, r)] for r in rows]
+    # intercala as viagens (1ª de cada, 2ª de cada...): se o tempo da execução acabar, ninguém fica sem nada
+    items = [x for grp in itertools.zip_longest(*plans) for x in grp if x]
     if not items:
         print("Todas as datas monitoradas já passaram.")
         return 0 if args.due else 1
     print(f"{len(rows)} busca(s) monitorada(s) → {len(items)} consulta(s) ao Google Voos.")
     with make_scraper(args) as scraper:
-        ok, failed = run_specs(conn, scraper, items, args.delay, args.top, args.max_offers, args.detail)
+        budget_min = args.time_budget or float(os.environ.get("FLIGHTS_TIME_BUDGET") or 0) or None
+        ok, failed = run_specs(conn, scraper, items, args.delay, args.top, args.max_offers, args.detail,
+                               deadline=time.monotonic() + budget_min * 60 if budget_min else None)
     print(f"\nConcluído: {ok} ok, {failed} com falha.")
     if ok and failed:
         # O que deu certo já está gravado e aparece no painel; a falha de algumas consultas vira só um aviso
@@ -303,7 +308,7 @@ def cmd_watch(args) -> int:
         spec = spec_from_args(args) if args.watch_cmd == "add" else multi_spec_from_args(args)
         wid = db.add_watch(conn, spec, flex_days=args.flex, label=args.label, every_hours=args.every,
                            compare_separate=args.compare_separate, booking_top=args.booking,
-                           ends=ends_from_args(args, spec))
+                           ends=ends_from_args(args, spec), budget=getattr(args, "budget", 40))
         print(f"Monitoramento #{wid} criado: {spec.label()}"
               + (f" (±{args.flex} dias)" if args.flex else "")
               + (f", a cada {args.every}h" if args.every else ", só manual"))
@@ -478,6 +483,8 @@ def build_parser() -> argparse.ArgumentParser:
     r.add_argument("ids", nargs="*", type=int, help="ids específicos (default: todos)")
     r.add_argument("--due", action="store_true", help="só as buscas cuja frequência (--every) já venceu")
     r.add_argument("--max-offers", type=int, metavar="N", help="guarda só os N voos mais baratos de cada coleta")
+    r.add_argument("--time-budget", type=float, metavar="MIN",
+                   help="para de começar consultas depois de MIN minutos (o que faltar fica para a próxima coleta); ou env FLIGHTS_TIME_BUDGET")
     scrape_opts(r)
     r.set_defaults(func=cmd_run)
 
@@ -496,6 +503,8 @@ def build_parser() -> argparse.ArgumentParser:
     wa.add_argument("--flex", type=int, default=0, metavar="N", help="busca ±N dias em torno da ida a cada run")
     wa.add_argument("--label", help="nome livre, ex.: 'Lisboa natal'")
     wa.add_argument("--every", type=int, metavar="HORAS", help="coletar a cada N horas no `run --due` (sem isso: só manual)")
+    wa.add_argument("--budget", type=int, default=40, metavar="N",
+                    help="com período de datas grande: no máximo N consultas por coleta (default 40); o resto fica para as próximas")
     wm = ws.add_parser("add-multi", help="cadastra uma viagem multi-destino")
     _add_multi_args(wm)
     wm.add_argument("--flex", type=int, default=0, metavar="N")

@@ -149,7 +149,9 @@ try:
         pg.locator("#plan-info.bad").wait_for(); pg.click("#watch-save")
         assert "máximo" in pg.inner_text("#watch-err") and pg.is_visible("#dlg-watch"), "recusa período grande demais"
         pg.fill(f + "[name=depart_to]", "2027-06-30"); pg.fill(f + "[name=return_to]", "2027-07-20")
-        pg.locator("#plan-info.bad").filter(has_text="mais de 60").wait_for()
+        pg.locator("#plan-info:not(.bad)").filter(has_text="cada coleta consulta até 40").wait_for()   # grande, mas não é recusado
+        assert pg.is_visible("#budget-wrap") and pg.is_hidden("#flex-wrap")
+        pg.select_option(f + "[name=budget]", "20"); pg.locator("#plan-info").filter(has_text="consulta até 20").wait_for(); pg.select_option(f + "[name=budget]", "40")
         pg.fill(f + "[name=depart_to]", "2027-06-03"); pg.fill(f + "[name=return_to]", "2027-06-12")
         pg.locator("#plan-info:not(.bad)").filter(has_text="9 combinações").wait_for()
         pg.fill(f + "[name=label]", "Período"); pg.uncheck(f + "[name=run_now]"); pg.click("#watch-save")

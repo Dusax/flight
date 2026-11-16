@@ -6,7 +6,8 @@ from datetime import date, datetime, timedelta, timezone
 from pathlib import Path
 from typing import Dict, Iterable, List, Optional, Tuple
 
-from .models import (MAX_COMBOS, Leg, ScrapeResult, SearchSpec, combo_dates, legs_from_json, normalize_ends,
+from . import planner
+from .models import (BUDGET_MAX, BUDGET_MIN, DEFAULT_BUDGET, MAX_COMBOS, Leg, ScrapeResult, SearchSpec, combo_dates, legs_from_json, normalize_ends,
                      parse_date, parse_iata, plan_specs)
 
 SCHEMA = """
@@ -22,6 +23,7 @@ CREATE TABLE IF NOT EXISTS watches (
     cabin        TEXT NOT NULL DEFAULT 'economy',
     max_stops    INTEGER,
     currency     TEXT NOT NULL DEFAULT 'BRL',
+    budget       INTEGER NOT NULL DEFAULT 40,  -- consultas por coleta quando há período de datas
     date_ranges  TEXT,                    -- fim do período de cada trecho: ["2026-12-25", null, ...] (NULL = sem período)
     every_hours  INTEGER,                 -- frequência da coleta agendada; NULL = só manual
     legs_json    TEXT,                    -- multi-destino: [{origin,destination,date}, ...]
@@ -112,7 +114,8 @@ def _migrate(conn) -> None:
     """Bancos criados por versões anteriores ganham as colunas novas."""
     wanted = {
         "watches": {"every_hours": "INTEGER", "legs_json": "TEXT", "compare_separate": "INTEGER NOT NULL DEFAULT 0",
-                    "booking_top": "INTEGER NOT NULL DEFAULT 0", "date_ranges": "TEXT"},
+                    "booking_top": "INTEGER NOT NULL DEFAULT 0", "date_ranges": "TEXT",
+                    "budget": "INTEGER NOT NULL DEFAULT 40"},
         "searches": {"min_nonstop": "REAL", "fastest_min": "INTEGER", "legs_json": "TEXT", "leg_index": "INTEGER"},
         "offers": {"cabin": "TEXT", "aircraft": "TEXT", "co2_kg": "INTEGER", "co2_diff_pct": "INTEGER",
                    "overnight": "INTEGER", "often_delayed": "INTEGER", "segments_json": "TEXT", "booking_json": "TEXT"},
@@ -148,31 +151,78 @@ def watch_plan(row, today: Optional[date] = None, include_past: bool = False) ->
 
 def add_watch(conn, spec: SearchSpec, flex_days: int = 0, label: Optional[str] = None,
               every_hours: Optional[int] = None, compare_separate: bool = False, booking_top: int = 0,
-              ends=None) -> int:
+              ends=None, budget: int = DEFAULT_BUDGET) -> int:
     ends = normalize_ends(spec, ends)
     check_plan(spec, flex_days, ends)
+    check_budget(budget)
     cur = conn.execute(
         """INSERT INTO watches (label, origin, destination, depart_date, return_date, flex_days,
                                 adults, cabin, max_stops, currency, every_hours, legs_json, compare_separate,
-                                booking_top, date_ranges, created_at)
-           VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)""",
+                                booking_top, date_ranges, budget, created_at)
+           VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)""",
         (label, spec.origin, spec.destination, spec.depart_date.isoformat(),
          spec.return_date.isoformat() if spec.return_date else None, flex_days,
          spec.adults, spec.cabin, spec.max_stops, spec.currency, every_hours, spec.legs_json,
-         int(compare_separate), booking_top, ends_to_json(ends), utcnow()),
+         int(compare_separate), booking_top, ends_to_json(ends), budget, utcnow()),
     )
     conn.commit()
     return cur.lastrowid
 
 
+def check_budget(budget: int) -> None:
+    if not BUDGET_MIN <= budget <= BUDGET_MAX:
+        raise ValueError(f"budget (consultas por coleta) deve ficar entre {BUDGET_MIN} e {BUDGET_MAX}")
+
+
 def check_plan(spec: SearchSpec, flex: int, ends) -> None:
-    """Recusa períodos que misturam com ± dias ou geram consultas demais."""
+    """Recusa períodos que misturam com ± dias ou geram combinações demais (mais do que dá para acompanhar)."""
     if any(ends) and flex:
         raise ValueError("use período de datas ou ± dias flexíveis, não os dois")
     if any(ends):
         n = len(combo_dates(spec, ends, include_past=True, limit=MAX_COMBOS))
         if n > MAX_COMBOS:
             raise ValueError(f"o período gera mais de {MAX_COMBOS} combinações de datas; reduza os períodos")
+
+
+def watch_known(conn, row, combos) -> Dict[tuple, tuple]:
+    """Última coleta boa de cada combinação de datas: (menor preço, quando). Só entram as já consultadas."""
+    spec = watch_to_spec(row)
+    known = {}
+    for c in combos:
+        rows = _rows_for(conn, row["id"], spec.with_dates(c))
+        if rows:
+            known[c] = (rows[-1]["min_price"], rows[-1]["scraped_at"])
+    return known
+
+
+def watch_run_plan(conn, row, today: Optional[date] = None) -> List[SearchSpec]:
+    """O que consultar NESTA coleta. Sem período, ou período que cabe no orçamento: tudo. Período maior que o
+    orçamento (`budget` consultas): escolhe com `planner.order` (mais baratas, vizinhas delas, amostra espalhada,
+    mais antigas) e deixa o resto para as próximas coletas."""
+    ends = watch_ends(row)
+    if not any(ends) or row["flex_days"]:
+        return watch_plan(row, today)
+    spec, compare = watch_to_spec(row), bool(row["compare_separate"])
+    combos = combo_dates(spec, ends, today)
+    budget = row["budget"] or DEFAULT_BUDGET
+    full = watch_plan(row, today)
+    if len(full) <= budget:
+        return full
+    starts = tuple(l.date for l in spec.all_legs())
+    ordered = planner.order(combos, starts, watch_known(conn, row, combos), planner.hot_count(budget))
+    out, seen = [], set()
+    for c in ordered:
+        s = spec.with_dates(c)
+        group = [s] + (s.leg_specs() if compare and len(s.all_legs()) > 1 else [])
+        new = [g for g in group if g.key() + (g.origin, g.destination, g.depart_date) not in seen]
+        if len(seen) + len(new) > budget:
+            continue
+        for g in new:
+            seen.add(g.key() + (g.origin, g.destination, g.depart_date))
+            out.append(g)
+        if len(seen) >= budget:
+            break
+    return out
 
 
 def list_watches(conn, only_active: bool = False) -> List[sqlite3.Row]:
@@ -385,6 +435,8 @@ def sync_watches(conn, items: List[dict]) -> Tuple[int, List[str]]:
             if not 0 <= flex <= 7:
                 raise ValueError("flex_days deve ficar entre 0 e 7")
             check_plan(spec, flex, ends)
+            budget = int(it.get("budget") or DEFAULT_BUDGET)
+            check_budget(budget)
             if every is not None and every < 1:
                 raise ValueError("every_hours deve ser >= 1")
             if not 0 <= booking_top <= 10:
@@ -395,16 +447,16 @@ def sync_watches(conn, items: List[dict]) -> Tuple[int, List[str]]:
         vals = (spec.origin, spec.destination, spec.depart_date.isoformat(),
                 spec.return_date.isoformat() if spec.return_date else None, flex, spec.adults, spec.cabin,
                 spec.max_stops, spec.currency, every, spec.legs_json, int(bool(it.get("compare_separate"))),
-                booking_top, int(it.get("active", True)), (it.get("label") or None), ends_to_json(ends))
+                booking_top, int(it.get("active", True)), (it.get("label") or None), ends_to_json(ends), budget)
         exists = conn.execute("SELECT 1 FROM watches WHERE id = ?", (wid,)).fetchone()
         if exists:
             conn.execute("""UPDATE watches SET origin=?, destination=?, depart_date=?, return_date=?, flex_days=?,
                             adults=?, cabin=?, max_stops=?, currency=?, every_hours=?, legs_json=?,
-                            compare_separate=?, booking_top=?, active=?, label=?, date_ranges=? WHERE id=?""", vals + (wid,))
+                            compare_separate=?, booking_top=?, active=?, label=?, date_ranges=?, budget=? WHERE id=?""", vals + (wid,))
         else:
             conn.execute("""INSERT INTO watches (origin, destination, depart_date, return_date, flex_days, adults,
                             cabin, max_stops, currency, every_hours, legs_json, compare_separate, booking_top,
-                            active, label, date_ranges, id, created_at) VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)""",
+                            active, label, date_ranges, budget, id, created_at) VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)""",
                          vals + (wid, utcnow()))
         keep.append(wid)
     if keep:
@@ -419,6 +471,8 @@ def sync_watches(conn, items: List[dict]) -> Tuple[int, List[str]]:
 
 HISTORY_POINTS = 240   # pontos de histórico por combinação de datas
 OFFERS_PER_COMBO = 30  # voos exibidos por combinação de datas
+DETAILED_COMBOS = 20   # só as N combinações mais baratas levam a lista de voos (períodos grandes gerariam MBs)
+TRIM_HISTORY = 30      # pontos de histórico das demais
 OFFERS_PER_LEG = 10    # voos exibidos por trecho na comparação "separado"
 
 _OFFER_COLS = """price, airline, operated_by, flight_numbers, origin, destination, dep_time, arr_time, duration_min,
@@ -576,6 +630,13 @@ def build_dashboard(conn, today: Optional[date] = None, favorites=None) -> Dict:
                 "offers": _offers_for(conn, cur["id"], OFFERS_PER_COMBO),
                 "separate": _separate(conn, w["id"], trip, cur["min_price"]) if compare and len(trip.all_legs()) > 1 else None,
             })
+        if len(combos) > DETAILED_COMBOS:   # período grande: o JSON só carrega os voos das mais baratas
+            keep = {id(c) for c in sorted(combos, key=lambda c: c["min_price"])[:DETAILED_COMBOS]}
+            for c in combos:
+                if id(c) not in keep:
+                    c.update(offers=[], separate=None, offers_trimmed=True, history=c["history"][-TRIM_HISTORY:])
+        plan_all = watch_plan(w, today)
+        space = len(combo_dates(spec, ends, today)) if any(ends) else None
         dep_last = ends[0] or spec.depart_date + timedelta(days=w["flex_days"])  # última data de ida possível
         out_watches.append({
             "id": w["id"], "label": w["label"], "origin": w["origin"], "destination": w["destination"],
@@ -587,7 +648,9 @@ def build_dashboard(conn, today: Optional[date] = None, favorites=None) -> Dict:
                       "date_to": ends[i].isoformat() if ends[i] else None} for i, l in enumerate(spec.legs)] or None,
             "depart_to": ends[0].isoformat() if ends[0] else None,
             "return_to": ends[1].isoformat() if spec.return_date and ends[1] else None,
-            "n_queries": len(watch_plan(w, today)),
+            "n_queries": len(plan_all), "budget": w["budget"] or DEFAULT_BUDGET,
+            "coverage": ({"space": space, "seen": len(combos), "per_run": min(len(plan_all), w["budget"] or DEFAULT_BUDGET),
+                          "runs_left": planner.coverage_runs(max(0, space - len(combos)), w["budget"] or DEFAULT_BUDGET)} if space else None),
             "compare_separate": compare, "booking_top": w["booking_top"],
             "expired": dep_last < today,
             "last_run_at": last, "next_run_at": next_run_at(w, last),

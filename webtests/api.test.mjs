@@ -267,7 +267,14 @@ test("normalizeWatch: recusa período inválido, grande demais ou junto com ± d
   assert.throws(() => normalizeWatch({ ...one, depart_to: "2027-02-01" }), /antes do início/);
   assert.throws(() => normalizeWatch({ ...one, depart_to: "2027-06-30" }), /no máximo 60 dias/);
   assert.throws(() => normalizeWatch({ ...one, depart_to: "2027-02-15", flex_days: 2 }), /não os dois/);
-  assert.throws(() => normalizeWatch({ ...one, return_date: "2027-03-01", depart_to: "2027-03-10", return_to: "2027-04-15" }), /mais de 60 combinações/);
+  // período grande não é recusado: cada coleta consulta só `budget` combinações (o resto fica para as próximas)
+  assert.equal(normalizeWatch({ ...one, return_date: "2027-03-01", depart_to: "2027-03-10", return_to: "2027-04-15" }).budget, 40);
+  const big = { ...one, origin: "gru", destination: "rom", depart_date: "2027-03-01", depart_to: "2027-03-30",
+    legs: [1, 2, 3].map((i) => ({ origin: i === 1 ? "GRU" : i === 2 ? "ROM" : "VCE", destination: i === 1 ? "ROM" : i === 2 ? "VCE" : "GRU", date: `2027-03-0${i}`, date_to: `2027-03-${20 + i}` })) };
+  assert.throws(() => normalizeWatch(big), /mais de 2000 combinações/);   // 3 trechos de ~20 dias cada: espaço enorme
+  assert.throws(() => normalizeWatch({ ...one, budget: 5 }), /consultas por coleta/);
+  assert.throws(() => normalizeWatch({ ...one, budget: 500 }), /consultas por coleta/);
+  assert.equal(normalizeWatch({ ...one, budget: 60 }).budget, 60);
   assert.throws(() => normalizeWatch({ ...one, depart_to: "15/02/2027" }), /inválido/);
 });
 

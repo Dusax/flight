@@ -30,8 +30,18 @@ frequência de cada uma pelo próprio painel e pode disparar uma coleta na hora.
 - **Período de datas (de X até Y, inclusive):** marque “Pesquisar um período de datas” e escolha o fim do período de cada
   data. Só ida: uma consulta por dia, de X a Y. Ida e volta: período da ida × período da volta (a volta nunca antes da ida).
   Multi-destino: cada trecho tem o seu período e entram todas as combinações em que os trechos seguem em ordem.
-  O formulário mostra quantas consultas isso gera por coleta. Limites: 60 dias por período e 60 combinações por viagem
-  (cada combinação é uma consulta ao Google; muitas seguidas de um mesmo IP provocam captcha). Não se mistura com ± dias.
+  O formulário mostra quantas combinações o período tem. Não se mistura com ± dias. Limites: 60 dias por período e
+  2000 combinações por busca.
+- **Períodos grandes (orçamento por coleta):** cada combinação é uma consulta ao Google (~20 s, e muitas seguidas de
+  um mesmo IP viram captcha). Em vez de recusar, cada coleta consulta no máximo N combinações (“Consultas por coleta”:
+  20, 40, 60 ou 100; padrão 40), escolhidas assim: as mais baratas já vistas (para manter o preço fresco), as
+  vizinhas das mais baratas (preços de datas próximas são parecidos), uma amostra espalhada do resto (da malha mais
+  grossa para a mais fina) e, quando tudo já foi visto, as que estão há mais tempo sem coleta. A 1ª coleta é uma
+  amostra do período inteiro, as seguintes se concentram no que é barato e o resto vai sendo coberto; o painel mostra
+  “N de M combinações consultadas”. O trecho separado (comparar) conta dentro do orçamento. O JSON do painel guarda a
+  lista de voos só das 20 combinações mais baratas. Com várias viagens, as consultas são intercaladas e a execução
+  para de começar consultas depois de 38 min (`FLIGHTS_TIME_BUDGET`): o que faltar fica para a próxima coleta.
+  Na linha de comando: `flights watch add ... --depart-to ... --budget 60` e `flights run --time-budget 38`.
 - Em ida e volta e multi-destino, o Google lista os voos do **1º trecho** com o preço
   **da viagem inteira**; os demais trechos só aparecem depois de escolher o voo no
   site. Para ver os outros trechos, use a comparação por trecho.

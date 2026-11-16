@@ -6,7 +6,8 @@ const IATA = /^[A-Z]{3}$/;
 const ISO_DATE = /^\d{4}-\d{2}-\d{2}$/;
 const CABINS = new Set(["economy", "premium", "business", "first"]);
 export const MAX_WATCHES = 60;
-export const MAX_COMBOS = 60;      // combinações de datas por busca (cada uma é uma consulta ao Google)
+export const MAX_COMBOS = 2000;    // combinações de datas que um período pode gerar (quanto cabe numa coleta é o `budget`)
+export const BUDGET_MIN = 10, BUDGET_MAX = 100, DEFAULT_BUDGET = 40;  // consultas ao Google por coleta
 export const MAX_RANGE_DAYS = 60;  // tamanho máximo do período de um trecho
 
 const isDate = (v) => typeof v === "string" && ISO_DATE.test(v) && !Number.isNaN(Date.parse(v)) && new Date(v).toISOString().slice(0, 10) === v;
@@ -92,6 +93,8 @@ export function normalizeWatch(w) {
     if (out.flex_days) throw new Error("use período de datas ou ± dias flexíveis, não os dois");
     if (countCombos(starts, ends) > MAX_COMBOS) throw new Error(`o período gera mais de ${MAX_COMBOS} combinações de datas; reduza os períodos`);
   }
+  if (!int(w.budget ?? DEFAULT_BUDGET, BUDGET_MIN, BUDGET_MAX)) throw new Error(`consultas por coleta: ${BUDGET_MIN} a ${BUDGET_MAX}`);
+  out.budget = w.budget ?? DEFAULT_BUDGET;
   if (!int(w.adults ?? 1, 1, 9)) throw new Error("adultos: 1 a 9");
   out.adults = w.adults ?? 1;
   if (!CABINS.has(w.cabin ?? "economy")) throw new Error("classe inválida");

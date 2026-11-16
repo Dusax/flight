@@ -32,6 +32,7 @@ jobs:
     env:
       DATA_REPO: ${{ vars.DATA_REPO || format('{0}-data', github.repository) }}
       FLIGHTS_QUIET: "1"
+      FLIGHTS_TIME_BUDGET: "38"   # min: depois disso não começa consulta nova; o que faltar fica para a próxima coleta (o job tem 45)
     steps:
       - name: Conferir o segredo do repositório de dados
         env:

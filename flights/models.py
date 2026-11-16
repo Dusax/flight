@@ -9,8 +9,10 @@ from typing import Dict, List, Optional, Tuple
 CABINS = {"economy": 1, "premium": 2, "business": 3, "first": 4}
 IATA_RE = re.compile(r"^[A-Za-z]{3}$")
 MAX_LEGS = 5  # limite do Google Voos para multi-destino
-MAX_COMBOS = 60       # combinações de datas por busca monitorada (cada uma é uma consulta ao Google)
+MAX_COMBOS = 2000     # combinações de datas que um período pode gerar (quanto cabe numa coleta é o `budget`)
 MAX_RANGE_DAYS = 60   # tamanho máximo do período de um trecho
+DEFAULT_BUDGET = 40   # consultas ao Google por coleta, por busca monitorada
+BUDGET_MIN, BUDGET_MAX = 10, 100
 
 
 def parse_date(value: str) -> date:
