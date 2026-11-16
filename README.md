@@ -20,6 +20,12 @@ frequência de cada uma pelo próprio painel e pode disparar uma coleta na hora.
 - **Comparar separado:** além do pacote, consulta cada trecho como só ida e soma os
   mais baratos. O painel diz se o pacote ou o separado compensa, e quanto. Vale para
   ida e volta e multi-destino. Passagens separadas não têm proteção de conexão.
+- **Voos favoritos:** na aba Voos de qualquer viagem, o botão **Favoritar** (estrela) guarda o voo. A aba **Favoritos**
+  (botão no topo) junta todos, com o preço de quando você salvou, o preço atual, a variação a cada coleta, se o voo
+  apareceu na última coleta e um atalho “Ver na viagem”. Ordena por mais recentes, menor preço ou data. Desfazer ao remover.
+  Ficam em `favorites.json` (repositório privado, até 200); o histórico de cada voo vem do banco, reconhecendo-o pelo
+  número do voo e horário de saída. O banco guarda os voos mais baratos de cada coleta: se o voo sair dessa lista,
+  o painel avisa “não apareceu na última coleta”.
 - **Datas flexíveis (±N dias):** todas as datas da viagem andam juntas.
 - **Período de datas (de X até Y, inclusive):** marque “Pesquisar um período de datas” e escolha o fim do período de cada
   data. Só ida: uma consulta por dia, de X a Y. Ida e volta: período da ida × período da volta (a volta nunca antes da ida).
@@ -39,6 +45,7 @@ frequência de cada uma pelo próprio painel e pode disparar uma coleta na hora.
  REPOSITÓRIO PÚBLICO  (código, workflow)  ◄──────►  REPOSITÓRIO PRIVADO  (só os seus dados)
    .github/workflows/scrape.yml (Actions, grátis)       watches.json   suas buscas
    scraper → grava no repo privado ───────────────────► dashboard.json resultados
+                                                        favorites.json voos favoritos
                                                         cloud.db       histórico
 ```
 
@@ -54,8 +61,8 @@ roda de graça. O código fica público; o que você pesquisa, os preços e o hi
   só tem um cookie de sessão `HttpOnly` + `SameSite=Strict` (+ `Secure` e prefixo `__Host-` em https),
   que o JavaScript não consegue ler. A sessão vale 7 dias e é assinada (HMAC); **trocar a senha
   derruba todas as sessões** (para derrubar sem trocar a senha, mude o `SESSION_SECRET`).
-- **O servidor só faz o que o painel precisa:** ler `dashboard.json`/`watches.json` do repositório de dados,
-  gravar `watches.json` (campos e limites validados) e disparar o workflow do repositório do código. O
+- **O servidor só faz o que o painel precisa:** ler `dashboard.json`/`watches.json`/`favorites.json` do repositório de dados,
+  gravar `watches.json` e `favorites.json` (campos e limites validados) e disparar o workflow do repositório do código. O
   navegador não escolhe URL nem repositório. Erros do GitHub não são repassados ao navegador.
 - **CSP restrita:** a página só conecta em si mesma (`connect-src 'self'`) e não roda nenhum script
   embutido (`script-src 'self'`), além de `noindex`, sem frames e sem referrer.

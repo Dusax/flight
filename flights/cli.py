@@ -282,12 +282,18 @@ def cmd_sync(args) -> int:
 def cmd_publish(args) -> int:
     """Gera o JSON que o painel (GitHub Pages) lê."""
     conn = db.connect(args.db)
-    data = db.build_dashboard(conn)
     out = Path(args.out)
     out.mkdir(parents=True, exist_ok=True)
+    favorites = []
+    if (out / "favorites.json").exists():  # voos favoritados no painel (o painel grava esse arquivo)
+        try:
+            favorites = json.loads((out / "favorites.json").read_text(encoding="utf-8"))
+        except ValueError:
+            print("favorites.json ilegível; favoritos ignorados nesta coleta.")
+    data = db.build_dashboard(conn, favorites=favorites)
     (out / "dashboard.json").write_text(json.dumps(data, ensure_ascii=False, separators=(",", ":")), encoding="utf-8")
     n_combos = sum(len(w["combos"]) for w in data["watches"])
-    print(f"{out / 'dashboard.json'}: {len(data['watches'])} busca(s), {n_combos} combinação(ões) de datas.")
+    print(f"{out / 'dashboard.json'}: {len(data['watches'])} busca(s), {n_combos} combinação(ões) de datas, {len(data['favorites'])} favorito(s).")
     return 0
 
 

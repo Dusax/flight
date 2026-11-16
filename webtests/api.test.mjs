@@ -104,7 +104,7 @@ test("/api/me devolve os repositórios (nunca o token)", async () => {
 });
 
 // ---------- toda rota de dados exige login ----------
-for (const [method, path, body] of [["GET", "/api/me"], ["GET", "/api/dashboard"], ["GET", "/api/watches"], ["PUT", "/api/watches", { list: [] }], ["POST", "/api/dispatch", { ids: [] }], ["GET", "/api/run-status"]]) {
+for (const [method, path, body] of [["GET", "/api/me"], ["GET", "/api/dashboard"], ["GET", "/api/watches"], ["PUT", "/api/watches", { list: [] }], ["GET", "/api/favorites"], ["PUT", "/api/favorites", { list: [] }], ["POST", "/api/dispatch", { ids: [] }], ["GET", "/api/run-status"]]) {
   test(`sem sessão: ${method} ${path} -> 401 e nada vai ao GitHub`, async () => {
     const r = await call(path, { method, body });
     assert.equal(r.status, 401);
@@ -209,7 +209,7 @@ test("erros do GitHub não vazam detalhes nem o token", async () => {
   const cookie = await login();
   for (const status of [401, 403, 404, 500]) {
     gh.failWith = status;
-    for (const [m, p, b] of [["GET", "/api/dashboard"], ["GET", "/api/watches"], ["PUT", "/api/watches", { list: [] }], ["POST", "/api/dispatch", { ids: [] }], ["GET", "/api/run-status"]]) {
+    for (const [m, p, b] of [["GET", "/api/dashboard"], ["GET", "/api/watches"], ["PUT", "/api/watches", { list: [] }], ["GET", "/api/favorites"], ["PUT", "/api/favorites", { list: [] }], ["POST", "/api/dispatch", { ids: [] }], ["GET", "/api/run-status"]]) {
       const r = await call(p, { method: m, body: b, cookie });
       assert.ok(r.status >= 400, `${m} ${p} ${status}`);
       assert.ok(!r.text.includes("SEGREDO-INTERNO") && !r.text.includes("ghp_vazou") && !r.text.includes(GH_TOKEN), `${m} ${p}: ${r.text}`);
@@ -269,4 +269,41 @@ test("normalizeWatch: recusa período inválido, grande demais ou junto com ± d
   assert.throws(() => normalizeWatch({ ...one, depart_to: "2027-02-15", flex_days: 2 }), /não os dois/);
   assert.throws(() => normalizeWatch({ ...one, return_date: "2027-03-01", depart_to: "2027-03-10", return_to: "2027-04-15" }), /mais de 60 combinações/);
   assert.throws(() => normalizeWatch({ ...one, depart_to: "15/02/2027" }), /inválido/);
+});
+
+// ---------- favoritos ----------
+const fav = (over = {}) => ({ id: "1|2027-02-10,2027-02-20|LA 8084|2027-02-10T22:10", watch_id: 1, saved_at: "2026-11-16T12:00:00.000Z", price: 4321.5, currency: "BRL",
+  dates: ["2027-02-10", "2027-02-20"], trip: { origin: "gru", destination: "lis", legs: null, adults: 2 },
+  offer: { airline: "LATAM", operated_by: null, flight_numbers: "LA 8084", origin: "GRU", destination: "LIS", dep_time: "2027-02-10T22:10", arr_time: "2027-02-11T12:00",
+    duration_min: 590, stops: 0, layover_airports: null, cabin: "Economy", aircraft: "Boeing 787", overnight: true, often_delayed: false, co2_kg: 600, co2_diff_pct: -5 }, ...over });
+
+test("favoritos: cria o arquivo, usa o sha, descarta campos desconhecidos e recusa conflito", async () => {
+  const cookie = await login();
+  assert.deepEqual((await call("/api/favorites", { cookie })).json, { sha: null, list: [] });
+  const evil = fav(); evil.evil = "<script>"; evil.offer.extra = 1;
+  const put1 = await call("/api/favorites", { method: "PUT", body: { list: [evil], message: "favoritou" }, cookie });
+  assert.equal(put1.status, 200, put1.text);
+  const saved = JSON.parse(gh.files.get("favorites.json").content);
+  assert.equal(saved[0].trip.origin, "GRU"); assert.ok(!("evil" in saved[0]) && !("extra" in saved[0].offer));
+  assert.equal((await call("/api/favorites", { cookie })).json.sha, put1.json.sha);
+  const stale = await call("/api/favorites", { method: "PUT", body: { list: [], sha: "0".repeat(40) }, cookie });
+  assert.equal(stale.status, 409);
+  assert.equal((await call("/api/favorites", { method: "PUT", body: { list: [], sha: put1.json.sha }, cookie })).status, 200);
+  assert.ok(gh.calls.every((c) => c.path.toLowerCase().startsWith("/repos/dusax/flight-data")));
+});
+
+test("favoritos: dados inválidos são recusados", async () => {
+  const cookie = await login();
+  const bad = [[{ id: "" }, "id"], [{ watch_id: 0 }, "viagem"], [{ saved_at: "ontem" }, "gravação"], [{ price: -1 }, "preço"], [{ price: "9" }, "preço"],
+    [{ dates: [] }, "datas"], [{ dates: ["2027-13-40"] }, "datas"], [{ trip: null }, "viagem do favorito"], [{ trip: { origin: "SAOP", destination: "LIS" } }, "IATA"],
+    [{ offer: null }, "voo"], [{ offer: { ...fav().offer, stops: 99 } }, "escalas"], [{ offer: { ...fav().offer, airline: "x".repeat(81) } }, "companhia"],
+    [{ offer: { ...fav().offer, dep_time: "amanhã" } }, "saída"], [{ currency: "REAIS" }, "moeda"]];
+  for (const [over, msg] of bad) {
+    const r = await call("/api/favorites", { method: "PUT", body: { list: [fav(over)] }, cookie });
+    assert.equal(r.status, 400, JSON.stringify(over)); assert.match(r.json.error, new RegExp(msg), r.json.error);
+  }
+  assert.equal((await call("/api/favorites", { method: "PUT", body: { list: [fav(), fav()] }, cookie })).status, 400); // repetido
+  assert.equal((await call("/api/favorites", { method: "PUT", body: { list: Array.from({ length: 201 }, (_, i) => fav({ id: `f${i}` })) }, cookie })).status, 400);
+  const ok = await call("/api/favorites", { method: "PUT", body: { list: [fav({ trip: { origin: "GRU", destination: "LIS", adults: 1, legs: [{ origin: "GRU", destination: "ROM" }, { origin: "ROM", destination: "LIS" }] }, dates: ["2027-02-10", "2027-02-15"] })] }, cookie });
+  assert.equal(ok.status, 200, ok.text);
 });

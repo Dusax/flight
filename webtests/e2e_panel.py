@@ -182,6 +182,37 @@ try:
             pg.click("[data-act=remove]"); pg.wait_for_selector(".tcard")  # o diálogo de confirmação já é aceito pelo handler do passo 12
         print("12b. período de datas: ida e volta (9 combinações), limites, multi-destino por trecho, edição")
 
+        # ---- voos favoritos ----
+        assert pg.is_enabled("#btn-favs") and pg.is_hidden("#fav-count")
+        pg.goto(base + "/#/viagem/3/voos"); pg.wait_for_selector(".fl .star")
+        star = pg.locator(".fl .star").first
+        assert star.get_attribute("aria-pressed") == "false"
+        star.click(); pg.locator(".toast").filter(has_text="Salvo nos favoritos").wait_for()
+        assert pg.locator(".fl .star").first.get_attribute("aria-pressed") == "true" and pg.inner_text("#fav-count") == "1"
+        favs = pg.evaluate("fetch('/api/favorites').then(r => r.json())")["list"]
+        assert len(favs) == 1 and favs[0]["watch_id"] == 3 and favs[0]["trip"]["origin"] == "GRU" and favs[0]["offer"]["flight_numbers"] and favs[0]["price"] > 0, favs
+        # multi-destino: o favorito guarda a data de cada trecho e os trechos
+        pg.goto(base + "/#/viagem/1/voos"); pg.wait_for_selector(".fl .star"); pg.locator(".fl .star").first.click()
+        pg.locator("#fav-count").filter(has_text="2").wait_for()
+        favs = pg.evaluate("fetch('/api/favorites').then(r => r.json())")["list"]
+        multi = next(f for f in favs if f["watch_id"] == 1)
+        assert len(multi["dates"]) == 3 and len(multi["trip"]["legs"]) == 3, multi
+        pg.click("#btn-favs"); pg.wait_for_selector(".fav")
+        assert pg.evaluate("location.hash") == "#/favoritos" and pg.locator(".fav").count() == 2
+        body = pg.inner_text(".favs"); assert "Rio de Janeiro" in body and "Preço quando salvou" in body and "Visto na última coleta" in body, body
+        pg.select_option("[data-favsort]", "price"); pg.wait_for_selector(".fav")
+        pg.goto(base + "/#/favoritos"); pg.wait_for_selector(".fav"); assert pg.locator(".fav").count() == 2, "favoritos persistem ao recarregar"
+        pg.locator('.fav [data-favopen]').first.click(); pg.wait_for_selector(".fl")
+        assert re.match(r"#/viagem/\d+/voos", pg.evaluate("location.hash")), "Ver na viagem abre a aba de voos"
+        pg.click("#btn-favs"); pg.wait_for_selector(".fav")
+        pg.locator(".fav .star").first.click(); pg.locator(".toast a[data-undo-fav]").wait_for()
+        assert pg.locator(".fav").count() == 1
+        pg.click("a[data-undo-fav]"); pg.locator(".toast").filter(has_text="restaurado").wait_for(); assert pg.locator(".fav").count() == 2
+        for _ in range(2): pg.locator(".fav .star").first.click(); pg.wait_for_timeout(400)
+        pg.wait_for_selector(".panel.empty"); assert "Nenhum favorito ainda" in pg.inner_text("#view") and pg.is_hidden("#fav-count")
+        assert pg.evaluate("fetch('/api/favorites').then(r => r.json())")["list"] == []
+        print("12c. favoritos: estrela no voo, aba Favoritos (preço quando salvou, visto na coleta), persiste, abrir viagem, desfazer, vazio")
+
         pg.goto(base + "/#/viagem/1/voos"); pg.wait_for_selector(".fl"); assert not pg.is_visible("#dlg-login")
         print("13. link direto + sessão mantida após recarregar")
         ctx.clear_cookies(); pg.click('[data-nav="/"]'); pg.click('.tcard [data-act=run]')

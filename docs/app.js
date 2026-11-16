@@ -40,6 +40,11 @@ const state = {
   watches: [],            // lista editável (watches.json)
   sha: null,              // sha atual do watches.json no repo de dados (null = ainda não existe)
   watchesLoaded: false,   // já li a lista de buscas?
+  favs: [],               // voos favoritos (favorites.json)
+  favSha: null,
+  favsLoaded: false,
+  favSort: "recent",
+  lastRemoved: null,      // último favorito removido (para "Desfazer")
   sel: {},                // combinação de datas selecionada por busca
   open: new Set(),        // cards com a tabela de voos aberta
   sort: {},               // ordenação da tabela de voos por busca
@@ -67,7 +72,7 @@ async function api(path, opts = {}) {
 }
 function onLoggedOut() {
   const was = state.authed;
-  state.authed = false; state.me = null; state.watchesLoaded = false; state.sha = null; stopPolling();
+  state.authed = false; state.me = null; state.watchesLoaded = false; state.sha = null; state.favs = []; state.favsLoaded = false; state.favSha = null; stopPolling();
   if (was) { toast("Sua sessão expirou. Entre de novo."); render(); openLogin(); }
 }
 
@@ -77,6 +82,16 @@ async function saveWatches(list, message) {
   const j = await api("/api/watches", { method: "PUT", body: JSON.stringify({ list, sha: state.sha, message }) });
   state.sha = j.sha;
   state.watches = j.list; // já normalizada pelo servidor
+}
+const fetchFavsFile = () => api("/api/favorites");
+async function saveFavs(list, message) {
+  const j = await api("/api/favorites", { method: "PUT", body: JSON.stringify({ list, sha: state.favSha, message }) });
+  state.favSha = j.sha;
+  state.favs = j.list; // já normalizada pelo servidor
+}
+async function reloadFavs() {
+  if (!canWrite()) return;
+  const f = await fetchFavsFile(); state.favSha = f.sha; state.favs = f.list; state.favsLoaded = true; render();
 }
 async function dispatch(ids) {
   await api("/api/dispatch", { method: "POST", body: JSON.stringify({ ids }) });
@@ -240,11 +255,14 @@ function render() {
   $("#updated").textContent = d?.generated_at ? `Dados de ${fmtStamp(d.generated_at)} · ${ago(d.generated_at)}` : "Sem coletas ainda";
   $("#btn-all").disabled = !canWrite() || !ws.length;
   $("#btn-new").disabled = !canWrite();
+  $("#btn-favs").disabled = !canWrite(); $("#btn-favs").classList.toggle("on", state.view.type === "favs");
+  $("#fav-count").hidden = !state.favs.length; $("#fav-count").textContent = state.favs.length;
   $("#auth-label").textContent = state.authed ? "Sair" : "Entrar";
   $("#btn-auth use").setAttribute("href", state.authed ? "#i-out" : "#i-in");
   renderBanners();
 
   const v = state.view;
+  if (v.type === "favs" && canWrite()) return renderFavs(ws);
   if (!ws.length) {
     $("#view").innerHTML = `<div class="panel empty">${icon("plane")}<h2>${canWrite() ? "Nenhuma viagem ainda" : "Entre para ver as suas viagens"}</h2>
       <p class="muted">${canWrite() ? "Cadastre a primeira e o painel passa a acompanhar os preços para você." : "Os preços ficam guardados no seu repositório privado."}</p>
@@ -446,11 +464,11 @@ function paneVoos(w, c) {
       <label>Companhia <select data-flt="airline"><option value="">Todas</option>${airlines.map((a) => `<option ${f.airline === a ? "selected" : ""}>${esc(a)}</option>`).join("")}</select></label>
       <label><input type="checkbox" data-flt="direct" ${f.direct ? "checked" : ""}> Só diretos</label>
       <span class="spacer"></span><span class="muted small">${list.length} voo${list.length === 1 ? "" : "s"} listado${list.length === 1 ? "" : "s"}${c.offers_count > all.length ? ` · ${c.offers_count} encontrados no total` : ""}</span></div>
-    <div class="flights">${shown.length ? shown.map((o, i) => flightRow(w, o, { cheapest: o.price === cheapest, fastest: o.duration_min === fastest, key: `${w.id}-${c.depart_date}-${o.flight_numbers}-${o.dep_time}` })).join("") : `<div class="panel empty"><p class="muted">Nenhum voo com esses filtros.</p></div>`}</div>
+    <div class="flights">${shown.length ? shown.map((o, i) => flightRow(w, o, { cheapest: o.price === cheapest, fastest: o.duration_min === fastest, key: `${w.id}-${c.depart_date}-${o.flight_numbers}-${o.dep_time}`, favId: canWrite() ? registerFav(w, c, o) : null })).join("") : `<div class="panel empty"><p class="muted">Nenhum voo com esses filtros.</p></div>`}</div>
     ${list.length > f.limit ? `<button class="btn more-btn" data-more="${w.id}">Mostrar mais ${Math.min(12, list.length - f.limit)} voos</button>` : ""}`;
 }
 
-function flightRow(w, o, { cheapest, fastest, key }) {
+function flightRow(w, o, { cheapest, fastest, key, favId }) {
   const next = dayDiff(o.dep_time, o.arr_time);
   const badges = [];
   if (cheapest) badges.push(`<span class="chip good">${icon("tag")}Mais barato</span>`);
@@ -469,7 +487,7 @@ function flightRow(w, o, { cheapest, fastest, key }) {
       <div class="ta-r"><div class="fl-t num">${fmtTime(o.arr_time)}${next > 0 ? `<span class="nextday">+${next}</span>` : ""}</div><div class="fl-c">${esc(o.destination)}</div></div></div>
     <div class="fl-price"><div class="price num${bigCls(money(o.price, w.currency))}">${money(o.price, w.currency)}</div>${w.adults > 1 ? `<div class="muted small">${money(o.price / w.adults, w.currency)} por adulto</div>` : ""}</div>
   </div>
-  <div class="fl-badges">${badges.join("")}</div>${detail ? `<details data-k="${esc(key)}"><summary>${icon("chev")}Detalhes do voo</summary><div class="fl-detail">${detail}</div></details>` : ""}</article>`;
+  <div class="fl-badges">${badges.join("")}${favId ? starBtn(favId) : ""}</div>${detail ? `<details data-k="${esc(key)}"><summary>${icon("chev")}Detalhes do voo</summary><div class="fl-detail">${detail}</div></details>` : ""}</article>`;
 }
 
 function flightDetail(w, o) {
@@ -621,7 +639,7 @@ async function guard(fn, okMsg) {
     let m = e.message;
     if (e.status === 409) m = "Conflito ao salvar (o arquivo mudou). Recarreguei os dados: tente de novo.";
     toast(esc(m), 9000);
-    if (e.status === 409) await reloadWatches().catch(() => {});
+    if (e.status === 409) { await reloadWatches().catch(() => {}); await reloadFavs().catch(() => {}); }
   }
 }
 async function reloadWatches() {
@@ -630,9 +648,94 @@ async function reloadWatches() {
 }
 const nextId = () => Math.max(0, ...state.watches.map((w) => +w.id || 0)) + 1;
 
+/* ---------- voos favoritos ---------- */
+const favCtx = new Map(); // id do favorito -> { w, c, o } do que está na tela (para gravar ao clicar na estrela)
+const comboDates = (c) => (c.legs && c.legs.length ? c.legs.map((l) => l.date) : [c.depart_date, ...(c.return_date ? [c.return_date] : [])]);
+const favIdOf = (w, c, o) => `${w.id}|${comboDates(c).join(",")}|${o.flight_numbers || ""}|${o.dep_time || ""}`;
+function registerFav(w, c, o) { const id = favIdOf(w, c, o); favCtx.set(id, { w, c, o }); return id; }
+const isFav = (id) => state.favs.some((f) => f.id === id);
+const starBtn = (id) => `<button type="button" class="star" data-fav="${esc(id)}" aria-pressed="${isFav(id)}" title="${isFav(id) ? "Remover dos favoritos" : "Salvar nos favoritos"}" aria-label="${isFav(id) ? "Remover dos favoritos" : "Salvar nos favoritos"}">${icon("star")}<span>${isFav(id) ? "Favorito" : "Favoritar"}</span></button>`;
+const OFFER_KEEP = ["airline", "operated_by", "flight_numbers", "origin", "destination", "dep_time", "arr_time", "duration_min", "stops", "layover_airports",
+  "cabin", "aircraft", "overnight", "often_delayed", "co2_kg", "co2_diff_pct"];
+function buildFav({ w, c, o }) {
+  const offer = {}; for (const k of OFFER_KEEP) offer[k] = o[k] ?? null; offer.airline = o.airline || "";
+  return { id: favIdOf(w, c, o), watch_id: w.id, saved_at: new Date().toISOString(), price: o.price, currency: w.currency || "BRL", dates: comboDates(c),
+    trip: { origin: w.origin, destination: w.destination, legs: isMulti(w) ? w.legs.map((l) => ({ origin: l.origin, destination: l.destination })) : null, adults: w.adults || 1 }, offer };
+}
+async function toggleFav(id) {
+  const cur = state.favs.find((f) => f.id === id);
+  if (cur) {
+    await saveFavs(state.favs.filter((f) => f.id !== id), "voo removido dos favoritos");
+    state.lastRemoved = cur; render();
+    toast(`Removido dos favoritos. <a href="#" data-undo-fav>Desfazer</a>`, 8000);
+  } else {
+    const ctx = favCtx.get(id); if (!ctx) return;
+    if (state.favs.length >= 200) return toast("Limite de 200 favoritos. Remova algum para salvar outro.", 7000);
+    await saveFavs([buildFav(ctx), ...state.favs], "voo salvo nos favoritos");
+    render(); toast(`Salvo nos favoritos. <a href="#/favoritos">Ver favoritos</a>`, 6000);
+  }
+}
+/** O que já se sabe do favorito agora: preço atual, histórico e se apareceu na última coleta. */
+function favInfo(f, ws) {
+  const srv = state.dashboard?.favorites?.[f.id] || null;
+  const w = ws.find((x) => x.id === f.watch_id) || null;
+  let live = null;
+  if (w) {
+    const c = w.combos.find((x) => comboDates(x).join(",") === f.dates.join(","));
+    const o = c?.offers?.find((x) => x.flight_numbers === f.offer.flight_numbers && x.dep_time === f.offer.dep_time);
+    if (c) live = { c, o: o || null };
+  }
+  const current = live?.o ? live.o.price : srv?.current ?? null;
+  const seen = live ? !!live.o : srv ? srv.seen_latest : null;           // null = ainda sem coleta depois de salvar
+  const searchedAt = live?.c.scraped_at || srv?.searched_at || null;
+  const lastSeen = live?.o ? live.c.scraped_at : srv?.last_seen_at || null;
+  return { w, current, seen, searchedAt, lastSeen, history: srv?.history || [], combo: live?.c || null };
+}
+const favDatesText = (f) => {
+  if (f.trip.legs) return f.trip.legs.map((l, i) => `${l.origin}→${l.destination} ${fmtDayShort(f.dates[i])}`).join(" · ");
+  return f.dates.length > 1 ? `Ida ${fmtDayShort(f.dates[0])} · Volta ${fmtDayShort(f.dates[1])}` : `Ida ${fmtDayShort(f.dates[0])}`;
+};
+const FAV_SORTS = { recent: "Mais recentes", price: "Menor preço", date: "Data da viagem" };
+function favCard(f, ws) {
+  const i = favInfo(f, ws), cur = f.currency, trip = { origin: f.trip.origin, destination: f.trip.destination, legs: f.trip.legs };
+  const price = i.current ?? f.price, past = f.dates[0] < todayIso();
+  const chips = [];
+  if (past) chips.push(`<span class="chip warn">Já passou</span>`);
+  if (!i.w) chips.push(`<span class="chip warn">${icon("alert")}Viagem removida: sem novas coletas</span>`);
+  else if (i.seen === true) chips.push(`<span class="chip good">${icon("check")}Visto na última coleta (${esc(ago(i.searchedAt))})</span>`);
+  else if (i.seen === false) chips.push(`<span class="chip warn" title="O voo pode ter esgotado ou saído dos mais baratos que o painel guarda.">${icon("alert")}Não apareceu na última coleta${i.lastSeen ? ` · visto ${esc(ago(i.lastSeen))}` : ""}</span>`);
+  else chips.push(`<span class="chip">${icon("clock")}Aguardando a próxima coleta</span>`);
+  const pkg = f.dates.length > 1 ? " (total da viagem inteira)" : "";
+  const delta = i.current != null ? deltaHtml(i.current, f.price, cur, "vs. quando salvou") : "";
+  const o = { ...f.offer, price };
+  return `<section class="panel fav${past ? " past" : ""}" data-fav-card="${esc(f.id)}">
+    <div class="fav-head"><div class="fav-t"><div class="fav-route">${esc(cityLine(trip))}</div>
+        <div class="muted small">${esc(favDatesText(f))} · salvo em ${esc(fmtStamp(f.saved_at))}</div></div>
+      ${spark(i.history)}
+      <div class="fav-acts">${i.w ? `<button class="btn sm" data-favopen="${esc(f.id)}">Ver na viagem${icon("chev")}</button>` : ""}</div>
+      <div class="chips fav-chips">${chips.join("")}</div>
+      <div class="fav-price"><span class="muted small">Preço quando salvou${pkg}:</span> <b class="num">${money(f.price, cur)}</b>${delta ? ` <span class="price-d">${delta}</span>` : ""}</div></div>
+    ${flightRow({ currency: cur, adults: f.trip.adults }, o, { key: `fav-${f.id}`, favId: f.id })}</section>`;
+}
+function renderFavs(ws) {
+  const sorted = [...state.favs];
+  const infos = new Map(sorted.map((f) => [f.id, favInfo(f, ws)]));
+  const by = { recent: (a, b) => b.saved_at.localeCompare(a.saved_at), price: (a, b) => (infos.get(a.id).current ?? a.price) - (infos.get(b.id).current ?? b.price),
+    date: (a, b) => a.dates[0].localeCompare(b.dates[0]) || a.saved_at.localeCompare(b.saved_at) };
+  sorted.sort(by[state.favSort] || by.recent);
+  $("#view").innerHTML = `<div class="section-title">Voos favoritos <span class="count">${state.favs.length}</span>
+      ${state.favs.length > 1 ? `<label class="fav-sort muted small">Ordenar <select data-favsort>${Object.entries(FAV_SORTS).map(([k, t]) => `<option value="${k}" ${state.favSort === k ? "selected" : ""}>${t}</option>`).join("")}</select></label>` : ""}</div>
+    ${sorted.length ? `<p class="muted small">Seus voos marcados com a estrela. O preço é atualizado a cada coleta e comparado com o que estava quando você salvou.</p>
+      <div class="favs">${sorted.map((f) => favCard(f, ws)).join("")}</div>`
+    : `<div class="panel empty">${icon("star")}<h2>Nenhum favorito ainda</h2>
+      <p class="muted">Na aba <b>Voos</b> de uma viagem, toque em <b>Favoritar</b> no voo que você gostou. Ele fica guardado aqui, com o preço de quando você salvou e a variação nas próximas coletas.</p>
+      <button class="btn primary" data-nav="/">${icon("left")}Ver minhas viagens</button></div>`}`;
+}
+
 /* ---------- navegação (hash) ---------- */
 function parseHash() {
   const m = location.hash.match(/^#\/viagem\/(\d+)(?:\/(\w+))?/);
+  if (/^#\/favoritos/.test(location.hash)) return { type: "favs" };
   return m ? { type: "trip", id: +m[1], tab: m[2] || "resumo" } : { type: "list" };
 }
 const go = (path) => { location.hash = "#" + path; };
@@ -642,7 +745,18 @@ window.addEventListener("hashchange", () => {
 });
 
 document.addEventListener("click", (e) => {
-  const t = e.target.closest("[data-act],[data-tab],[data-combo],[data-nav],[data-open-trip],[data-open],[data-more]"); if (!t) return;
+  const t = e.target.closest("[data-act],[data-tab],[data-combo],[data-nav],[data-open-trip],[data-open],[data-more],[data-fav],[data-favopen],[data-undo-fav]"); if (!t) return;
+  if (t.dataset.fav) { e.preventDefault(); return void guard(() => toggleFav(t.dataset.fav)); }
+  if (t.dataset.favopen) {
+    const f = state.favs.find((x) => x.id === t.dataset.favopen), w = f && merged().find((x) => x.id === f.watch_id); if (!w) return;
+    const i = w.combos.findIndex((c) => comboDates(c).join(",") === f.dates.join(",")); if (i >= 0) state.sel[w.id] = i;
+    fltState(w).airline = ""; fltState(w).direct = false; fltState(w).sort = "price";
+    return go(`/viagem/${w.id}/voos`);
+  }
+  if (t.hasAttribute("data-undo-fav")) {
+    e.preventDefault(); const f = state.lastRemoved; if (!f) return; state.lastRemoved = null; t.closest(".toast")?.remove();
+    return void guard(async () => { await saveFavs([f, ...state.favs.filter((x) => x.id !== f.id)], "voo restaurado nos favoritos"); render(); }, "Favorito restaurado.");
+  }
   if (t.dataset.open === "login") { e.preventDefault(); openLogin(); return; }
   if (t.dataset.nav) return go(t.dataset.nav);
   if (t.dataset.tab) return go(`/viagem/${state.view.id}/${t.dataset.tab}`);
@@ -665,6 +779,7 @@ document.addEventListener("click", (e) => {
   }
 });
 document.addEventListener("change", (e) => {
+  const fs = e.target.closest("[data-favsort]"); if (fs) { state.favSort = fs.value; return render(); }
   const t = e.target.closest("[data-flt]"); if (!t || state.view.type !== "trip") return;
   const f = fltState({ id: state.view.id });
   const k = t.dataset.flt; f[k] = t.type === "checkbox" ? t.checked : t.value; f.limit = 12; render();
@@ -677,7 +792,7 @@ $("#btn-new").onclick = () => openWatchDialog(null);
 $("#btn-auth").onclick = async () => {
   if (!state.authed) return openLogin();
   try { await api("/api/logout", { method: "POST", body: "{}" }); } catch {}
-  state.authed = false; state.me = null; state.watchesLoaded = false; state.sha = null; state.dashboard = null; state.watches = []; stopPolling();
+  state.authed = false; state.me = null; state.watchesLoaded = false; state.sha = null; state.dashboard = null; state.watches = []; state.favs = []; state.favsLoaded = false; state.favSha = null; stopPolling();
   render(); toast("Você saiu.");
 };
 
@@ -960,6 +1075,7 @@ async function load() {
     state.dashboard = state.dashboard || { generated_at: null, watches: [] };
     state.loadError = e.message;
   }
+  if (canWrite() && !state.favsLoaded) { try { await reloadFavs(); } catch (e) { if (e.status !== 401) toast(`Não consegui ler os favoritos: ${esc(e.message)}`, 8000); } }
   if (canWrite() && !state.watchesLoaded) { try { await reloadWatches(); } catch (e) { if (e.status !== 401) toast(`Não consegui ler as buscas cadastradas: ${esc(e.message)}`, 8000); } }
   render();
 }

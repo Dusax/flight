@@ -508,7 +508,41 @@ def _last_attempt(conn, watch_id: int) -> Optional[Dict]:
             "failed": len(bad), "total": len(rows)}
 
 
-def build_dashboard(conn, today: Optional[date] = None) -> Dict:
+def build_favorites(conn, favs) -> Dict[str, dict]:
+    """Para cada voo favorito (id -> dados), o que já se sabe dele nas coletas: preço atual, histórico e se
+    apareceu na última coleta da mesma combinação de datas. O voo é reconhecido pelo número e horário de saída."""
+    out: Dict[str, dict] = {}
+    watches = {r["id"]: r for r in list_watches(conn)}
+    for f in favs if isinstance(favs, list) else []:
+        if not isinstance(f, dict) or not isinstance(f.get("id"), str):
+            continue
+        info = {"current": None, "history": [], "last_seen_at": None, "searched_at": None, "seen_latest": False}
+        try:
+            row, dates, o = watches.get(f.get("watch_id")), f.get("dates") or [], f.get("offer") or {}
+            if row is not None and dates:
+                spec = watch_to_spec(row)
+                if len(dates) == len(spec.all_legs()):
+                    trip = spec.with_dates([date.fromisoformat(d) for d in dates])
+                    rows = _rows_for(conn, row["id"], trip)
+                    hist, last_hit = [], None
+                    for r in rows:
+                        price = conn.execute("SELECT MIN(price) FROM offers WHERE search_id = ? AND flight_numbers IS ? AND dep_time IS ?",
+                                             (r["id"], o.get("flight_numbers"), o.get("dep_time"))).fetchone()[0]
+                        if price is not None:
+                            hist.append([r["scraped_at"], price])
+                            last_hit = r["id"]
+                    if rows:
+                        info["searched_at"] = rows[-1]["scraped_at"]
+                    if hist:
+                        info.update(current=hist[-1][1], last_seen_at=hist[-1][0], history=hist[-HISTORY_POINTS:],
+                                    seen_latest=bool(rows) and last_hit == rows[-1]["id"])
+        except (ValueError, KeyError, TypeError):
+            pass
+        out[f["id"]] = info
+    return out
+
+
+def build_dashboard(conn, today: Optional[date] = None, favorites=None) -> Dict:
     """Tudo que a página precisa, num JSON só. Só entra o que está em `watches` e bate com a
     configuração atual da busca (se você editar as datas, as coletas antigas deixam de aparecer)."""
     today = today or date.today()
@@ -563,4 +597,4 @@ def build_dashboard(conn, today: Optional[date] = None) -> Dict:
             "last_total": last_attempt["total"] if last_attempt else 0,
             "combos": combos,
         })
-    return {"generated_at": utcnow(), "watches": out_watches}
+    return {"generated_at": utcnow(), "watches": out_watches, "favorites": build_favorites(conn, favorites or [])}

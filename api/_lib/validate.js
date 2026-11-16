@@ -122,3 +122,71 @@ export function normalizeWatches(list) {
     return n;
   });
 }
+
+// ---------- voos favoritos (favorites.json) ----------
+export const MAX_FAVORITES = 200;
+
+const text = (v, max, what) => {
+  if (typeof v !== "string" || v.length > max || /[\u0000-\u001f]/.test(v)) throw new Error(`${what} inválido`);
+  return v;
+};
+const optText = (v, max, what) => (v == null || v === "" ? null : text(v, max, what));
+const optInt = (v, lo, hi, what) => {
+  if (v == null) return null;
+  if (!int(v, lo, hi)) throw new Error(`${what} inválido`);
+  return v;
+};
+const optBool = (v) => (v == null ? null : v === true);
+const ISO_TS = /^\d{4}-\d{2}-\d{2}T\d{2}:\d{2}(:\d{2})?(\.\d+)?(Z|[+-]\d{2}:\d{2})?$/;
+const isoTs = (v, what) => { if (typeof v !== "string" || !ISO_TS.test(v)) throw new Error(`${what} inválido`); return v; };
+const optTs = (v, what) => (v == null || v === "" ? null : isoTs(v, what));
+
+export function normalizeFavorite(f) {
+  if (!f || typeof f !== "object" || Array.isArray(f)) throw new Error("favorito inválido");
+  const out = { id: text(f.id, 220, "id") };
+  if (!out.id) throw new Error("id inválido");
+  if (!int(f.watch_id, 1, 1_000_000)) throw new Error("viagem inválida");
+  out.watch_id = f.watch_id;
+  out.saved_at = isoTs(f.saved_at, "data de gravação");
+  if (typeof f.price !== "number" || !Number.isFinite(f.price) || f.price < 0 || f.price > 100_000_000) throw new Error("preço inválido");
+  out.price = f.price;
+  const cur = String(f.currency || "BRL").toUpperCase();
+  if (!IATA.test(cur)) throw new Error("moeda inválida");
+  out.currency = cur;
+  if (!Array.isArray(f.dates) || f.dates.length < 1 || f.dates.length > 5 || !f.dates.every(isDate)) throw new Error("datas inválidas");
+  out.dates = f.dates;
+  const t = f.trip;
+  if (!t || typeof t !== "object") throw new Error("viagem do favorito inválida");
+  const code = (v, what) => { const c = String(v || "").toUpperCase(); if (!IATA.test(c)) throw new Error(`${what}: use códigos IATA de 3 letras`); return c; };
+  out.trip = { origin: code(t.origin, "origem"), destination: code(t.destination, "destino"), legs: null, adults: 1 };
+  if (t.legs != null) {
+    if (!Array.isArray(t.legs) || t.legs.length < 2 || t.legs.length > 5) throw new Error("trechos inválidos");
+    out.trip.legs = t.legs.map((l, i) => ({ origin: code(l?.origin, `trecho ${i + 1}`), destination: code(l?.destination, `trecho ${i + 1}`) }));
+  }
+  if (t.adults != null) { if (!int(t.adults, 1, 9)) throw new Error("adultos inválido"); out.trip.adults = t.adults; }
+  const o = f.offer;
+  if (!o || typeof o !== "object") throw new Error("voo inválido");
+  out.offer = {
+    airline: text(o.airline ?? "", 80, "companhia"), operated_by: optText(o.operated_by, 80, "operador"),
+    flight_numbers: optText(o.flight_numbers, 80, "voo"), origin: code(o.origin, "origem do voo"), destination: code(o.destination, "destino do voo"),
+    dep_time: optTs(o.dep_time, "saída"), arr_time: optTs(o.arr_time, "chegada"),
+    duration_min: optInt(o.duration_min, 0, 10_000, "duração"), stops: optInt(o.stops, 0, 9, "escalas"),
+    layover_airports: optText(o.layover_airports, 80, "conexões"), cabin: optText(o.cabin, 40, "classe"), aircraft: optText(o.aircraft, 60, "aeronave"),
+    overnight: optBool(o.overnight), often_delayed: optBool(o.often_delayed),
+    co2_kg: optInt(o.co2_kg, 0, 100_000, "CO₂"), co2_diff_pct: optInt(o.co2_diff_pct, -100, 1000, "CO₂"),
+  };
+  return out;
+}
+
+export function normalizeFavorites(list) {
+  if (!Array.isArray(list)) throw new Error("a lista de favoritos deve ser um array");
+  if (list.length > MAX_FAVORITES) throw new Error(`no máximo ${MAX_FAVORITES} favoritos`);
+  const seen = new Set();
+  return list.map((f, i) => {
+    let n;
+    try { n = normalizeFavorite(f); } catch (e) { throw new Error(`favorito ${i + 1}: ${e.message}`); }
+    if (seen.has(n.id)) throw new Error(`favorito ${i + 1}: repetido`);
+    seen.add(n.id);
+    return n;
+  });
+}

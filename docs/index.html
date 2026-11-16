@@ -39,6 +39,7 @@
     <symbol id="i-bolt" viewBox="0 0 24 24"><path d="M13 2 3 14h9l-1 8 10-12h-9z"/></symbol>
     <symbol id="i-seat" viewBox="0 0 24 24"><path d="M6 3v9a3 3 0 0 0 3 3h7l3 6M6 12H4M10 21H6"/></symbol>
     <symbol id="i-tag" viewBox="0 0 24 24"><path d="M20.6 13.4 13.4 20.6a2 2 0 0 1-2.8 0L3 13V3h10l7.6 7.6a2 2 0 0 1 0 2.8z"/><circle cx="7.5" cy="7.5" r="1.2"/></symbol>
+    <symbol id="i-star" viewBox="0 0 24 24"><path d="m12 2.8 2.9 5.9 6.5.9-4.7 4.6 1.1 6.5L12 17.6l-5.8 3.1 1.1-6.5L2.6 9.6l6.5-.9z"/></symbol>
     <symbol id="i-bell" viewBox="0 0 24 24"><path d="M6 8a6 6 0 0 1 12 0c0 7 3 9 3 9H3s3-2 3-9M10.3 21a1.9 1.9 0 0 0 3.4 0"/></symbol>
   </defs>
 </svg>
@@ -52,6 +53,7 @@
     <div class="grow appbar-sub" id="updated">Carregando…</div>
     <div class="appbar-actions">
       <button class="btn primary" id="btn-all" disabled title="Buscar agora (todas as viagens)" aria-label="Buscar agora, todas as viagens"><svg class="ico"><use href="#i-refresh"/></svg><span class="lbl">Buscar agora</span></button>
+      <button class="btn" id="btn-favs" disabled data-nav="/favoritos" title="Voos favoritos" aria-label="Voos favoritos"><svg class="ico"><use href="#i-star"/></svg><span class="lbl">Favoritos</span><span class="badge" id="fav-count" hidden></span></button>
       <button class="btn" id="btn-new" disabled title="Nova viagem" aria-label="Nova viagem"><svg class="ico"><use href="#i-plus"/></svg><span class="lbl">Nova viagem</span></button>
       <button class="btn ghost" id="btn-auth" title="Entrar ou sair"><svg class="ico"><use href="#i-in"/></svg><span class="lbl" id="auth-label">Entrar</span></button>
     </div>
