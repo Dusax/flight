@@ -437,6 +437,30 @@ def _separate(conn, watch_id: int, trip: SearchSpec, trip_min: float) -> Optiona
             "vs_trip": (total - trip_min) if complete else None}  # negativo = separado compensa
 
 
+ATTEMPT_WINDOW = timedelta(minutes=30)  # buscas de uma mesma coleta (a coleta toda leva poucos minutos)
+_BAD = ("blocked", "error")
+
+
+def _last_attempt(conn, watch_id: int) -> Optional[Dict]:
+    """Resultado da coleta mais recente da busca, somando todas as consultas dela (datas flexíveis,
+    trechos): se qualquer uma falhou, a falha aparece no painel mesmo que a última tenha dado certo."""
+    last = conn.execute("SELECT scraped_at FROM searches WHERE watch_id = ? ORDER BY id DESC LIMIT 1",
+                        (watch_id,)).fetchone()
+    if not last:
+        return None
+    try:
+        t0 = datetime.strptime(last["scraped_at"], "%Y-%m-%dT%H:%M:%SZ") - ATTEMPT_WINDOW
+        since = t0.strftime("%Y-%m-%dT%H:%M:%SZ")
+    except ValueError:
+        since = last["scraped_at"]
+    rows = conn.execute("SELECT status, error, scraped_at FROM searches WHERE watch_id = ? AND scraped_at >= ? ORDER BY id",
+                        (watch_id, since)).fetchall()
+    bad = [r for r in rows if r["status"] in _BAD]
+    pick = next((r for r in bad if r["status"] == "blocked"), None) or (bad[-1] if bad else rows[-1])
+    return {"status": pick["status"], "error": pick["error"], "scraped_at": last["scraped_at"],
+            "failed": len(bad), "total": len(rows)}
+
+
 def build_dashboard(conn, today: Optional[date] = None) -> Dict:
     """Tudo que a página precisa, num JSON só. Só entra o que está em `watches` e bate com a
     configuração atual da busca (se você editar as datas, as coletas antigas deixam de aparecer)."""
@@ -445,9 +469,7 @@ def build_dashboard(conn, today: Optional[date] = None) -> Dict:
     for w in list_watches(conn):
         spec = watch_to_spec(w)
         last = last_run_at(conn, w["id"])
-        last_attempt = conn.execute(
-            "SELECT status, error, scraped_at FROM searches WHERE watch_id = ? ORDER BY id DESC LIMIT 1",
-            (w["id"],)).fetchone()
+        last_attempt = _last_attempt(conn, w["id"])
         compare = bool(w["compare_separate"])
         combos = []
         for trip in plan_specs(spec, w["flex_days"], compare, today):
@@ -485,6 +507,8 @@ def build_dashboard(conn, today: Optional[date] = None) -> Dict:
             "last_run_at": last, "next_run_at": next_run_at(w, last),
             "last_status": last_attempt["status"] if last_attempt else None,
             "last_error": last_attempt["error"] if last_attempt else None,
+            "last_failed": last_attempt["failed"] if last_attempt else 0,
+            "last_total": last_attempt["total"] if last_attempt else 0,
             "combos": combos,
         })
     return {"generated_at": utcnow(), "watches": out_watches}

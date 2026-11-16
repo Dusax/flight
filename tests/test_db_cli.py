@@ -131,3 +131,18 @@ def test_cli_failure_is_recorded_and_run_continues(monkeypatch, tmp_path, capsys
     soon = (date.today() + timedelta(days=30)).isoformat()
     assert run_cli(monkeypatch, tmp_path, fake, "search", "GRU", "LIS", soon, "--flex", "1") == 1
     assert len(fake.calls) == 3
+
+
+def test_dashboard_mostra_falha_mesmo_se_a_ultima_consulta_deu_certo(tmp_path):
+    """Uma consulta bloqueada numa coleta de várias não pode sumir do painel só porque a seguinte funcionou."""
+    from datetime import date
+    from flights import db
+    from flights.models import SearchSpec
+    conn = db.connect(tmp_path / "t.db")
+    wid = db.add_watch(conn, SearchSpec(origin="GRU", destination="LIS", depart_date=date(2030, 5, 1), adults=1, cabin="economy",
+                                        max_stops=None, currency="BRL"), flex_days=1)
+    spec = SearchSpec(origin="GRU", destination="LIS", depart_date=date(2030, 5, 1), adults=1, cabin="economy", max_stops=None, currency="BRL")
+    db.save_search(conn, spec, error="captcha", status="blocked", watch_id=wid)
+    db.save_search(conn, spec, error="boom", watch_id=wid)
+    w = db.build_dashboard(conn, today=date(2030, 1, 1))["watches"][0]
+    assert w["last_status"] == "blocked" and w["last_failed"] == 2 and w["last_total"] == 2

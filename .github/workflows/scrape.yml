@@ -113,5 +113,16 @@ jobs:
       - name: Falha na coleta (bloqueio do Google, erro...)
         if: steps.collect.outcome == 'failure'
         run: |
-          echo "A coleta falhou. O motivo está no painel (aviso na busca). Para depurar, rode localmente com --debug."
+          # só status e contagens (a rota/datas das buscas não vão para este log público)
+          python - <<'PY'
+          import sqlite3
+          c = sqlite3.connect("data/cloud.db")
+          rows = c.execute("select status, count(*) from searches where scraped_at >= strftime('%Y-%m-%dT%H:%M:%SZ','now','-30 minutes') group by 1").fetchall()
+          print("Buscas desta execução:", ", ".join(f"{n} {s}" for s, n in rows) or "nenhuma")
+          if any(s == "blocked" for s, _ in rows):
+              print("O Google pediu captcha (muitas consultas seguidas do mesmo IP). Não é bug: o agendamento tenta de novo na próxima hora.")
+              print("Evite disparar várias execuções manuais em sequência.")
+          else:
+              print("Detalhe do erro: aviso na busca, no painel.")
+          PY
           exit 1

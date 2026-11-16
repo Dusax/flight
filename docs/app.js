@@ -210,6 +210,10 @@ const inHours = (ts) => {
   return `em ${Math.round(s / 86400)} d`;
 };
 const failed = (w) => !!w.last_status && !["ok", "empty"].includes(w.last_status);
+const failTitle = (w) => `${w.last_status === "blocked" ? "Bloqueada pelo Google" : "Falhou"}${w.last_total > 1 ? ` (${w.last_failed} de ${w.last_total} consultas)` : ""}`;
+const failCause = (w) => (w.last_status === "blocked"
+  ? "O Google pediu captcha por causa de muitas consultas seguidas do mesmo endereço. Não é defeito do sistema: a próxima coleta agendada tenta de novo. Evite disparar várias buscas em sequência."
+  : (w.last_error || "O erro não trouxe detalhe.").replace(/[\s.]*$/, ". ") + "Se repetir em toda coleta, o Google pode ter mudado a página.");
 const totalLabel = (w) => (isMulti(w) ? "Total da viagem inteira" : w.return_date ? "Total ida e volta" : "A partir de");
 
 /* ---------- renderização ---------- */
@@ -249,7 +253,8 @@ function renderBanners() {
   if (run) {
     const live = run.status !== "completed", ok = run.conclusion === "success";
     if (live) b.push(`<div class="banner">${icon("refresh")}<div><b>Coleta em andamento…</b> Leva alguns minutos; a página atualiza sozinha. <a target="_blank" rel="noopener noreferrer" href="${esc(run.html_url)}">Ver execução</a></div></div>`);
-    else if (!ok) b.push(`<div class="banner err">${icon("alert")}<div><b>A última coleta falhou</b> (${esc(run.conclusion)}) ${ago(run.updated_at)}. <a target="_blank" rel="noopener noreferrer" href="${esc(run.html_url)}">Ver detalhes</a><div class="muted small">Pode ser bloqueio do Google (captcha) ou mudança no layout. O log mostra o motivo.</div></div></div>`);
+    else if (!ok) b.push(`<div class="banner err">${icon("alert")}<div><b>A última coleta falhou</b> (${esc(run.conclusion)}) ${ago(run.updated_at)}. <a target="_blank" rel="noopener noreferrer" href="${esc(run.html_url)}">Ver detalhes</a>${(() => { const bad = (state.dashboard?.watches || []).filter(failed); const w0 = bad.find((w) => w.last_status === "blocked") || bad[0];
+        return w0 ? `<div class="muted small">${esc(failCause(w0))}${bad.length > 1 ? ` (${bad.length} viagens afetadas)` : ""}</div>` : `<div class="muted small">O motivo de cada falha aparece no cartão da viagem. O log do GitHub é discreto de propósito (repositório público).</div>`; })()}</div></div>`);
   }
   $("#banners").innerHTML = b.join("");
 }
@@ -306,6 +311,7 @@ function tripCard(w) {
     <div class="tcard-top"><div><div class="tcard-name">${esc(w.label || kindLabel(w))}</div><div class="tcard-sub">${esc(cityLine(w))}</div></div><div class="chips">${chips.join("")}</div></div>
     ${routeViz(w)}
     ${body}
+    ${failed(w) ? `<div class="tcard-fail" title="${esc(failCause(w))}">${icon("alert")}<span><b>${esc(failTitle(w))}.</b> ${esc(failCause(w))}</span></div>` : ""}
     <div class="tcard-foot"><span>${c ? `Coletado ${esc(ago(c.scraped_at))}` : esc(nextText(w))}</span>
       <span class="btns"><button class="btn sm" data-act="run" data-id="${w.id}" ${rw ? "" : "disabled"}>${icon("refresh")}Buscar agora</button></span></div>
   </article>`;
@@ -342,7 +348,7 @@ function renderTrip(w, v) {
       </div>
       <div class="chips">${metaChips(w)}${failed(w) ? `<span class="chip bad">${icon("alert")}Última coleta falhou</span>` : ""}${w.active ? "" : `<span class="chip warn">${icon("pause")}Pausada</span>`}</div>
       <div class="muted small">${c ? `Resultado de ${esc(fmtStamp(c.scraped_at))} (${esc(ago(c.scraped_at))})` : ""}${c && nextText(w) ? " · " : ""}${esc(nextText(w))}</div>
-      ${failed(w) ? `<div class="banner err nomargin">${icon("alert")}<div>A última tentativa ${w.last_status === "blocked" ? "foi bloqueada pelo Google" : "falhou"}. <span class="muted small">${esc(w.last_error || "")}</span></div></div>` : ""}
+      ${failed(w) ? `<div class="banner err nomargin">${icon("alert")}<div><b>A última coleta ${w.last_status === "blocked" ? "foi bloqueada pelo Google" : "falhou"}${w.last_total > 1 ? ` em ${w.last_failed} de ${w.last_total} consultas` : ""}.</b> <div class="muted small">${esc(failCause(w))}</div></div></div>` : ""}
     </section>
     <nav class="tabs" role="tablist" aria-label="Seções da viagem">${tabs.map(([k, t]) => `<button class="tab" role="tab" id="tab-${k}" aria-selected="${k === tab}" data-tab="${k}">${t}${count[k] ? ` <span class="chip">${count[k]}</span>` : ""}</button>`).join("")}</nav>
     <div role="tabpanel" aria-labelledby="tab-${tab}">${pane}</div>`;

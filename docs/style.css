@@ -180,6 +180,9 @@ code { background: var(--surface-2); padding: 1px 6px; border-radius: 6px; font-
 .fact-v { font-weight: 700; font-size: 14.5px; }
 .tcard-foot { display: flex; justify-content: space-between; align-items: center; gap: 10px; color: var(--text-3); font-size: 12.5px; }
 .tcard-foot .btns { display: flex; gap: 6px; }
+.tcard-fail { display: flex; gap: 8px; align-items: flex-start; font-size: 12.5px; line-height: 1.4; color: var(--bad); background: var(--bad-soft); border-radius: 10px; padding: 9px 11px; overflow-wrap: anywhere; }
+.tcard-fail .icon { flex: none; margin-top: 1px; }
+.tcard-fail span { min-width: 0; display: -webkit-box; -webkit-box-orient: vertical; -webkit-line-clamp: 3; overflow: hidden; }
 .tcard-empty { color: var(--text-2); font-size: 14px; background: var(--surface-2); border-radius: 12px; padding: 14px; }
 
 /* ---------- avatar da companhia ---------- */
