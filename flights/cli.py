@@ -255,7 +255,11 @@ def cmd_run(args) -> int:
     with make_scraper(args) as scraper:
         ok, failed = run_specs(conn, scraper, items, args.delay, args.top, args.max_offers, args.detail)
     print(f"\nConcluído: {ok} ok, {failed} com falha.")
-    return 0 if not failed else 1
+    if ok and failed:
+        # O que deu certo já está gravado e aparece no painel; a falha de algumas consultas vira só um aviso
+        # (anotação amarela no Actions) e o motivo fica no cartão da viagem. Execução vermelha = nada funcionou.
+        print(f"::warning::{failed} de {ok + failed} consulta(s) falharam; as {ok} que deram certo foram salvas. O motivo aparece no painel.")
+    return 0 if ok or not failed else 1
 
 
 def cmd_sync(args) -> int:

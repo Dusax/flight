@@ -171,7 +171,7 @@ def test_quiet_mode_prints_no_route_price_or_error_text(tmp_path, capsys, monkey
     monkeypatch.setattr(cli.time, "sleep", lambda s: None)
     try:
         assert cli.main(["--db", dbp, "--quiet", "sync-watches", str(f)]) == 0
-        assert cli.main(["--db", dbp, "--quiet", "run"]) == 1  # uma falha
+        assert cli.main(["--db", dbp, "--quiet", "run"]) == 0  # 2 de 3 deram certo: só um aviso, execução verde
         out = capsys.readouterr()
         text = out.out + out.err
         for secret in ("GRU", "MAD", "FCO", "VCE", "1234", "1.234", "BRL", "LATAM", "XX 999", "SEGREDO", "tfs", "google.com", "typical"):
@@ -212,3 +212,32 @@ def test_watches_written_by_the_panel_server_are_accepted_by_the_collector(tmp_p
     rows = {r["id"]: r for r in db.list_watches(conn)}
     assert (rows[1]["cabin"], rows[1]["compare_separate"], rows[1]["booking_top"], rows[1]["every_hours"]) == ("business", 1, 3, 12)
     assert db.watch_to_spec(rows[3]).route() == "GRU→LIS→MAD→GRU" and rows[3]["active"] == 0 and rows[3]["every_hours"] is None
+
+
+def test_run_so_fica_vermelho_se_nada_deu_certo(tmp_path, monkeypatch, capsys):
+    """Falha parcial: o que deu certo é salvo e a execução fica verde (com aviso). Tudo falhando: erro."""
+    f = tmp_path / "w.json"
+    soon = date.today() + timedelta(days=40)
+    f.write_text(json.dumps([{**PAGE_ITEM, "id": 1, "depart_date": soon.isoformat(), "return_date": None, "flex_days": 1}]))
+    dbp = str(tmp_path / "x.db")
+
+    def fake(fail_all):
+        class Fake:
+            n = 0
+            def __enter__(self): return self
+            def __exit__(self, *a): pass
+            def search(self, spec, **kw):
+                from flights.scraper import ScrapeError
+                Fake.n += 1
+                if fail_all or Fake.n == 2:
+                    raise ScrapeError("boom")
+                return ScrapeResult([offer(1234)], "https://www.google.com/x", "typical")
+        return Fake()
+
+    monkeypatch.setattr(cli.time, "sleep", lambda s: None)
+    cli.main(["--db", dbp, "sync-watches", str(f)])
+    monkeypatch.setattr(cli, "make_scraper", lambda a: fake(False))
+    assert cli.main(["--db", dbp, "run"]) == 0
+    assert "::warning::1 de 3 consulta" in capsys.readouterr().out
+    monkeypatch.setattr(cli, "make_scraper", lambda a: fake(True))
+    assert cli.main(["--db", dbp, "run"]) == 1

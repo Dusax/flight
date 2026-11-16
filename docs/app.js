@@ -222,7 +222,10 @@ const inHours = (ts) => {
 };
 const hasRange = (w) => !!(w.depart_to || w.return_to || (w.legs || []).some((l) => l.date_to));
 const failed = (w) => !!w.last_status && !["ok", "empty"].includes(w.last_status);
-const failTitle = (w) => `${w.last_status === "blocked" ? "Bloqueada pelo Google" : "Falhou"}${w.last_total > 1 ? ` (${w.last_failed} de ${w.last_total} consultas)` : ""}`;
+const partial = (w) => w.last_total > 1 && w.last_failed < w.last_total && (w.combos || []).length > 0; // parte deu certo e já está no painel
+const failTitle = (w) => (partial(w)
+  ? `${w.last_failed} de ${w.last_total} consultas falharam; as outras deram certo e estão aqui`
+  : `${w.last_status === "blocked" ? "Bloqueada pelo Google" : "Falhou"}${w.last_total > 1 ? ` (${w.last_failed} de ${w.last_total} consultas)` : ""}`);
 const failCause = (w) => (w.last_status === "blocked"
   ? "O Google pediu captcha por causa de muitas consultas seguidas do mesmo endereço. Não é defeito do sistema: a próxima coleta agendada tenta de novo. Evite disparar várias buscas em sequência."
   : /something went wrong/i.test(w.last_error || "")
@@ -306,7 +309,7 @@ function tripCard(w) {
   if (c) chips.push(levelChip(c.price_level));
   if (!w.active) chips.push(`<span class="chip warn">${icon("pause")}Pausada</span>`);
   if (w.expired) chips.push(`<span class="chip warn">Já passou</span>`);
-  if (failed(w)) chips.push(`<span class="chip bad">${icon("alert")}Coleta falhou</span>`);
+  if (failed(w)) chips.push(partial(w) ? `<span class="chip warn">${icon("alert")}${w.last_failed} de ${w.last_total} falharam</span>` : `<span class="chip bad">${icon("alert")}Coleta falhou</span>`);
   let body;
   if (!c) {
     body = `<div class="tcard-empty">${w.pending ? "Aguardando a primeira coleta. Use “Buscar agora” para acelerar." : w.last_status === "empty" ? "O Google não retornou voos para essas datas." : "Ainda sem resultados."}</div>`;
@@ -325,7 +328,7 @@ function tripCard(w) {
     <div class="tcard-top"><div><div class="tcard-name">${esc(w.label || kindLabel(w))}</div><div class="tcard-sub">${esc(cityLine(w))}</div></div><div class="chips">${chips.join("")}</div></div>
     ${routeViz(w)}
     ${body}
-    ${failed(w) ? `<div class="tcard-fail" title="${esc(failCause(w))}">${icon("alert")}<span><b>${esc(failTitle(w))}.</b> ${esc(failCause(w))}</span></div>` : ""}
+    ${failed(w) ? `<div class="tcard-fail${partial(w) ? " soft" : ""}" title="${esc(failCause(w))}">${icon("alert")}<span><b>${esc(failTitle(w))}.</b> ${esc(failCause(w))}</span></div>` : ""}
     <div class="tcard-foot"><span>${c ? `Coletado ${esc(ago(c.scraped_at))}` : esc(nextText(w))}</span>
       <span class="btns"><button class="btn sm" data-act="run" data-id="${w.id}" ${rw ? "" : "disabled"}>${icon("refresh")}Buscar agora</button></span></div>
   </article>`;
@@ -360,9 +363,9 @@ function renderTrip(w, v) {
           <button class="btn danger" data-act="remove" data-id="${w.id}" ${rw ? "" : "disabled"}>${icon("trash")}Remover</button>
         </div>
       </div>
-      <div class="chips">${metaChips(w)}${failed(w) ? `<span class="chip bad">${icon("alert")}Última coleta falhou</span>` : ""}${w.active ? "" : `<span class="chip warn">${icon("pause")}Pausada</span>`}</div>
+      <div class="chips">${metaChips(w)}${failed(w) ? (partial(w) ? `<span class="chip warn">${icon("alert")}Coleta parcial</span>` : `<span class="chip bad">${icon("alert")}Última coleta falhou</span>`) : ""}${w.active ? "" : `<span class="chip warn">${icon("pause")}Pausada</span>`}</div>
       <div class="muted small">${c ? `Resultado de ${esc(fmtStamp(c.scraped_at))} (${esc(ago(c.scraped_at))})` : ""}${c && nextText(w) ? " · " : ""}${esc(nextText(w))}</div>
-      ${failed(w) ? `<div class="banner err nomargin">${icon("alert")}<div><b>A última coleta ${w.last_status === "blocked" ? "foi bloqueada pelo Google" : "falhou"}${w.last_total > 1 ? ` em ${w.last_failed} de ${w.last_total} consultas` : ""}.</b> <div class="muted small">${esc(failCause(w))}</div></div></div>` : ""}
+      ${failed(w) ? `<div class="banner ${partial(w) ? "" : "err"} nomargin">${icon("alert")}<div><b>${partial(w) ? `Coleta parcial: ${w.last_failed} de ${w.last_total} consultas falharam. As ${w.last_total - w.last_failed} que deram certo estão mostradas aqui.` : `A última coleta ${w.last_status === "blocked" ? "foi bloqueada pelo Google" : "falhou"}${w.last_total > 1 ? ` em ${w.last_failed} de ${w.last_total} consultas` : ""}.`}</b> <div class="muted small">${esc(failCause(w))}</div></div></div>` : ""}
     </section>
     <nav class="tabs" role="tablist" aria-label="Seções da viagem">${tabs.map(([k, t]) => `<button class="tab" role="tab" id="tab-${k}" aria-selected="${k === tab}" data-tab="${k}">${t}${count[k] ? ` <span class="chip">${count[k]}</span>` : ""}</button>`).join("")}</nav>
     <div role="tabpanel" aria-labelledby="tab-${tab}">${pane}</div>`;
