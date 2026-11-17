@@ -631,6 +631,9 @@ def build_dashboard(conn, today: Optional[date] = None, favorites=None) -> Dict:
                          for l in trip.all_legs()],
                 "scraped_at": cur["scraped_at"], "min_price": cur["min_price"],
                 "min_nonstop": cur["min_nonstop"], "fastest_min": cur["fastest_min"],
+                # duração do voo mais barato (se houver empate no preço, o mais rápido): desempata qual data é a melhor
+                "best_duration_min": conn.execute("SELECT MIN(duration_min) FROM offers WHERE search_id = ? AND price = ?",
+                                                  (cur["id"], cur["min_price"])).fetchone()[0],
                 "price_level": cur["price_level"], "offers_count": cur["offers_count"],
                 "typical_low": cur["typical_low"], "typical_high": cur["typical_high"],
                 "first_price": rows[0]["min_price"], "first_at": rows[0]["scraped_at"],

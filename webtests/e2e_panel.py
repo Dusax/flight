@@ -75,9 +75,20 @@ try:
         assert re.search(r"mais barato", pg.inner_text(".verdict")) and pg.locator("tfoot").count() == 1
         print("6. comparação pacote × separado:", pg.inner_text(".verdict"))
         pg.evaluate("location.hash = '#/viagem/4/datas'"); pg.wait_for_selector(".dtile")
-        assert pg.locator(".dtile.min").count() == 1
+        # 3 datas a R$ 3.579: duas com o mesmo voo de 7h40 (empate total: as duas são "Melhor") e uma de 8h40 ("Mesmo preço")
+        assert pg.locator(".dtile.min").count() == 3
+        tiles = pg.locator(".dtile.min .dx").all_inner_texts()
+        assert sorted(t.split(" · ")[0] for t in tiles) == ["Melhor", "Melhor", "Mesmo preço"], tiles
+        assert [t for t in tiles if t.startswith("Melhor")] == ["Melhor · 7h40"] * 2 and any("8h40" in t for t in tiles), tiles
+        txt = pg.inner_text(".dates").replace("\xa0", " ") + pg.inner_text("#view")
+        assert "As melhores datas são" in txt and "empate também no tempo" in txt
         pg.locator(".dtile").nth(1).click(); pg.wait_for_selector(".fl"); assert pg.evaluate("location.hash").endswith("/voos")
-        print("7. calendário de datas: menor preço marcado; clicar numa data abre os voos dela")
+        print("7. calendário de datas: empate de preço desempata pelo tempo; empate total marca todas como melhores; clicar abre os voos")
+
+        pg.evaluate("location.hash = '#/'"); pg.wait_for_selector(".tcard")
+        c4 = pg.inner_text('.tcard[data-open-trip="4"]'); assert "Melhores datas:" in c4, c4
+        pg.evaluate("location.hash = '#/viagem/4/resumo'"); pg.wait_for_selector(".best")
+        assert pg.locator(".best .chip", has_text="Empata com").count() <= 1
 
         # ---- ações ----
         pg.evaluate("location.hash = '#/'"); pg.wait_for_selector(".tcard")

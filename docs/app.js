@@ -126,7 +126,13 @@ function merged() {
     return { ...d, ...w, combos: d.combos || [], pending: !byId.has(w.id) };
   });
 }
-function bestCombo(w) { return w.combos.reduce((b, c) => (!b || c.min_price < b.min_price ? c : b), null); }
+/* A melhor data é a mais barata; em empate no preço, a de voo mais curto (duração do voo mais barato dela); persistindo, a mais cedo. */
+const comboDur = (c) => c.best_duration_min ?? c.offers?.[0]?.duration_min ?? c.fastest_min ?? 1e9;
+const cmpCombo = (a, b) => a.min_price - b.min_price || comboDur(a) - comboDur(b);
+function bestCombo(w) { return w.combos.reduce((b, c) => (!b || cmpCombo(c, b) < 0 ? c : b), null); }
+/* todas as datas empatadas na melhor posição (mesmo preço E mesmo tempo de voo), da mais cedo para a mais tarde */
+function bestCombos(w) { const b = bestCombo(w); return b ? w.combos.filter((c) => cmpCombo(c, b) === 0).sort((x, y) => x.depart_date.localeCompare(y.depart_date) || (x.end_date || "").localeCompare(y.end_date || "")) : []; }
+const joinDates = (list, max = 3) => `${list.slice(0, max).map(dateSpan).join(" · ")}${list.length > max ? ` +${list.length - max}` : ""}`;
 function comboIndex(w) {
   const i = state.sel[w.id];
   if (i != null && w.combos[i]) return i;
@@ -341,7 +347,7 @@ function tripCard(w) {
     body = `<div class="price-row"><div><div class="price-k">${esc(totalLabel(w))}</div><div class="price num${bigCls(money(c.min_price, w.currency))}">${money(c.min_price, w.currency)}</div>
         <div class="price-d">${deltaHtml(c.min_price, c.prev_price, w.currency, "vs. anterior")}</div></div>${spark(c.history)}</div>
       ${typicalOf(c) ? `<div class="muted small tcard-typ" title="Faixa em que costumam ficar os voos mais baratos desta rota, segundo o Google">Faixa típica ${money(typicalOf(c).typical_low, w.currency)} a ${money(typicalOf(c).typical_high, w.currency)}</div>` : ""}
-      <div class="chips">${w.combos.length > 1 ? `<span class="chip good">${icon("cal")}Melhor data: ${esc(dateSpan(c))}</span>` : ""}${metaChips(w)}</div>
+      <div class="chips">${w.combos.length > 1 ? (() => { const bs = bestCombos(w); return `<span class="chip good">${icon("cal")}${bs.length > 1 ? "Melhores datas" : "Melhor data"}: ${esc(joinDates(bs))}</span>`; })() : ""}${metaChips(w)}</div>
       <div class="facts">
         <div><div class="fact-k">${icon("clock")}Mais rápida</div><div class="fact-v num">${hm(c.fastest_min)}</div></div>
         <div><div class="fact-k">${icon("plane")}Direto</div><div class="fact-v num">${c.min_nonstop == null ? "—" : money(c.min_nonstop, w.currency)}</div></div>
@@ -433,12 +439,12 @@ function paneResumo(w, c) {
   const typ = typicalOf(c);
   const per = w.adults > 1 ? `<span class="muted">${money(c.min_price / w.adults, w.currency)} por adulto</span>` : "";
   const since = c.first_at && c.first_at !== c.scraped_at && c.first_price != null ? deltaHtml(c.min_price, c.first_price, w.currency, "desde a 1ª coleta") : "";
-  const topDates = w.combos.length > 1 ? [...w.combos].map((x, i) => [x, i]).sort((a, b) => a[0].min_price - b[0].min_price).slice(0, 4) : [];
+  const topDates = w.combos.length > 1 ? [...w.combos].map((x, i) => [x, i]).sort((a, b) => cmpCombo(a[0], b[0])).slice(0, Math.min(12, Math.max(4, bestCombos(w).length))) : [];
   return `<div class="hero">
     <section class="panel best">
       <div class="best-top"><div><div class="price-k">${esc(totalLabel(w))}${w.combos.length > 1 ? ` · ${esc(dateSpan(c))}` : ""}</div>
         <div class="price lg num${bigCls(money(c.min_price, w.currency))}">${money(c.min_price, w.currency)}</div><div class="price-d">${deltaHtml(c.min_price, c.prev_price, w.currency)} ${per}</div></div>
-        <div class="chips">${levelChip(c.price_level)}</div></div>
+        <div class="chips">${levelChip(c.price_level)}${(() => { const bs = bestCombos(w); return bs.length > 1 && bs.includes(c) ? `<span class="chip good" title="Mesmo preço e mesmo tempo de voo">${icon("cal")}Empata com ${esc(joinDates(bs.filter((x) => x !== c)))}</span>` : ""; })()}</div></div>
       ${best ? `${itinHtml(best)}
         <div class="fl-air">${avatar(best.airline)}<div><b>${esc(best.airline)}</b><span class="muted small">${esc(best.flight_numbers || "")}${best.operated_by && best.operated_by !== best.airline ? ` · operado por ${esc(best.operated_by)}` : ""}</span></div></div>` : ""}
       ${rangeHtml(c.min_price, typ, w.currency)}
@@ -533,25 +539,27 @@ function flightDetail(w, o) {
 /* ---- datas ---- */
 function dateTile(w, x, i, sel, combos) {
   const lo = Math.min(...combos.map((q) => q.min_price)), hi = Math.max(...combos.map((q) => q.min_price));
+  const best = combos.reduce((b, c) => (!b || cmpCombo(c, b) < 0 ? c : b), null), tied = combos.filter((q) => q.min_price === lo).length > 1;
+  const isBest = cmpCombo(x, best) === 0;   // empate total (preço e tempo): todas as datas empatadas são "Melhor"
   const r = hi === lo ? 0 : (x.min_price - lo) / (hi - lo);
   const cls = x.min_price === lo ? "min" : r > 0.9 ? "t3" : r > 0.66 ? "t2" : r > 0.33 ? "t1" : "";
   const end = x.end_date || x.return_date;
   return `<button class="dtile ${cls}" data-combo="${w.id}:${i}" aria-pressed="${x === sel}" title="Ver os voos desta data">
     <span class="dw">${esc(weekday(x.depart_date))}</span><span class="dd">${esc(fmtDayShort(x.depart_date))}${end && end !== x.depart_date ? ` → ${esc(fmtDayShort(end))}` : ""}</span>
-    <span class="dp num">${money(x.min_price, w.currency)}</span><span class="dx">${x.min_price === lo ? "Menor preço" : `+${money(x.min_price - lo, w.currency)}`}</span></button>`;
+    <span class="dp num">${money(x.min_price, w.currency)}</span><span class="dx">${x.min_price === lo ? (isBest ? (tied ? `Melhor · ${hm(comboDur(x))}` : "Menor preço") : `Mesmo preço · ${hm(comboDur(x))}`) : `+${money(x.min_price - lo, w.currency)}`}</span></button>`;
 }
 const DATES_TOP = 24, DETAILED_COMBOS = 20; // espelha DETAILED_COMBOS de flights/db.py
 function paneDatas(w, c) {
   const byDate = (a, b) => a[0].depart_date.localeCompare(b[0].depart_date) || (a[0].end_date || "").localeCompare(b[0].end_date || "");
   const all = w.combos.map((x, i) => [x, i]);
   const lo = Math.min(...w.combos.map((x) => x.min_price));
-  const best = w.combos.find((x) => x.min_price === lo);
+  const bests = bestCombos(w), best = bests[0], ties = w.combos.filter((x) => x.min_price === lo).length;
   const many = all.length > DATES_TOP, showAll = !many || state.datesAll?.[w.id];
-  const shown = showAll ? [...all].sort(byDate) : [...all].sort((a, b) => a[0].min_price - b[0].min_price).slice(0, DATES_TOP).sort(byDate);
+  const shown = showAll ? [...all].sort(byDate) : [...all].sort((a, b) => cmpCombo(a[0], b[0])).slice(0, DATES_TOP).sort(byDate);
   const cov = w.coverage;
   const covNote = cov && cov.space > (w.budget || 40) ? `<div class="banner">${icon("cal")}<div><b>Período grande: ${cov.seen} de ${cov.space} combinações já consultadas.</b>
       <div class="muted small">Cada coleta consulta até ${esc(w.budget)} (as mais baratas e as datas vizinhas a elas primeiro, depois uma amostra espalhada do resto). ${cov.seen < cov.space ? `O período inteiro fica visto em cerca de ${cov.runs_left} coleta${cov.runs_left > 1 ? "s" : ""}; use “Buscar agora” para adiantar.` : "O período inteiro já foi visto; as coletas agora renovam as mais baratas e as mais antigas."}</div></div></div>` : "";
-  return `${covNote}<p class="muted">Menor preço em cada data comparada. Clique numa data para ver os voos dela. A mais barata é <b>${esc(dateSpan(best))}</b> (${money(lo, w.currency)}).</p>
+  return `${covNote}<p class="muted">Menor preço em cada data comparada. Clique numa data para ver os voos dela. ${bests.length > 1 ? `As melhores datas são <b>${esc(joinDates(bests, 8))}</b>` : `A melhor data é <b>${esc(dateSpan(best))}</b>`} (${money(lo, w.currency)}${ties > 1 ? `; ${ties} datas têm o mesmo preço, a melhor é a de voo mais curto${bests.length > 1 ? " e há empate também no tempo" : ""}: ${hm(comboDur(best))}` : ""}).</p>
     <div class="dates">${shown.map(([x, i]) => dateTile(w, x, i, c, w.combos)).join("")}</div>
     ${many ? `<button class="btn more-btn" data-dates-all="${w.id}">${showAll ? `Mostrar só as ${DATES_TOP} mais baratas` : `Mostrar todas as ${all.length} datas`}</button>` : ""}`;
 }

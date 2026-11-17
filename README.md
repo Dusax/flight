@@ -20,6 +20,9 @@ frequência de cada uma pelo próprio painel e pode disparar uma coleta na hora.
 - **Comparar separado:** além do pacote, consulta cada trecho como só ida e soma os
   mais baratos. O painel diz se o pacote ou o separado compensa, e quanto. Vale para
   ida e volta e multi-destino. Passagens separadas não têm proteção de conexão.
+- **Melhor data:** a de menor preço; em empate de preço, a de voo mais curto (duração do voo mais barato dela); se ainda
+  empatar em preço **e** tempo, todas as datas empatadas são listadas como melhores (cartão “Melhores datas: …”, aba
+  Datas “Melhor · 7h40”, Resumo “Empata com …”). Datas de mesmo preço e voo mais longo aparecem como “Mesmo preço”.
 - **Faixa de preço típica:** em toda busca só ida e ida e volta a coleta abre o “View price history” do Google e guarda
   a faixa em que costumam ficar os voos mais baratos da rota (ex.: R$ 3.700–4.600) e o nível (baixo/normal/alto). Aparece
   no cartão da viagem, no Resumo e no topo da aba Voos, com a posição do preço atual na faixa. A tela de compra (só ida,
