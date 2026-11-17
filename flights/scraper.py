@@ -12,7 +12,7 @@ from playwright.sync_api import TimeoutError as PlaywrightTimeout
 from playwright.sync_api import sync_playwright
 
 from .models import ScrapeResult, SearchSpec
-from .parser import parse_booking, parse_cards
+from .parser import parse_booking, parse_cards, parse_insight
 from .tfs import build_url
 
 USER_AGENT = (
@@ -180,6 +180,30 @@ class FlightScraper:
                     self._reset_context()
         raise last  # type: ignore[misc]
 
+    def _read_insight(self, page) -> dict:
+        """Abre 'View price history' e lê a faixa de preço típica da rota. Não é essencial: qualquer falha
+        (botão ausente, como no multi-destino, ou layout diferente) só deixa a informação de fora."""
+        for _ in range(2):
+            try:
+                btn = page.get_by_text("View price history", exact=True)
+                try:
+                    btn.first.wait_for(state="visible", timeout=5000)
+                except PlaywrightTimeout:
+                    return {}
+                btn.first.click(timeout=4000)
+                try:
+                    page.wait_for_function("() => /usually cost between/.test(document.body.innerText)", timeout=6000)
+                except PlaywrightTimeout:
+                    pass
+                info = parse_insight(page.evaluate("document.body.innerText"))
+                page.keyboard.press("Escape")
+                page.wait_for_timeout(300)
+                if info.get("typical_low") is not None:
+                    return info
+            except (PlaywrightError, ValueError):
+                pass
+        return {}
+
     def _search_once(self, spec: SearchSpec, detail_offers: int, booking_top: int) -> ScrapeResult:
         url = build_url(spec, self.country)
         page = self._context.new_page()
@@ -202,6 +226,7 @@ class FlightScraper:
                 page.evaluate(_EXPAND_JS, detail_offers)
                 page.wait_for_timeout(1500)
             data = page.evaluate(_EXTRACT_JS)
+            insight = self._read_insight(page)
             warnings: list = []
             if booking_top:
                 if spec.trip_type == "one_way":
@@ -216,7 +241,8 @@ class FlightScraper:
                     "provavelmente mudou. Rode com --debug e veja data/debug/."
                 )
             return ScrapeResult(
-                offers=offers, url=url, price_level=data["price_level"],
+                offers=offers, url=url, price_level=data["price_level"] or insight.get("level"),
+                typical_low=insight.get("typical_low"), typical_high=insight.get("typical_high"),
                 cards_no_price=no_price, cards_unreadable=unreadable, warnings=warnings,
             )
         except (ScrapeError, PlaywrightError) as e:

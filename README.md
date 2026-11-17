@@ -20,6 +20,10 @@ frequência de cada uma pelo próprio painel e pode disparar uma coleta na hora.
 - **Comparar separado:** além do pacote, consulta cada trecho como só ida e soma os
   mais baratos. O painel diz se o pacote ou o separado compensa, e quanto. Vale para
   ida e volta e multi-destino. Passagens separadas não têm proteção de conexão.
+- **Faixa de preço típica:** em toda busca só ida e ida e volta a coleta abre o “View price history” do Google e guarda
+  a faixa em que costumam ficar os voos mais baratos da rota (ex.: R$ 3.700–4.600) e o nível (baixo/normal/alto). Aparece
+  no cartão da viagem, no Resumo e no topo da aba Voos, com a posição do preço atual na faixa. A tela de compra (só ida,
+  voos mais baratos) continua trazendo a sua própria faixa, que tem prioridade. Multi-destino não tem: o Google não mostra.
 - **Consulta pontual:** o botão **Consulta pontual** (raio, no topo) busca uma vez, na hora, sem cadastrar para repetir.
   Usa o mesmo formulário (ida, ida e volta, multi-destino, períodos de datas), mas sem nome nem frequência. Dispara a
   coleta e o resultado (1 a 5 min) fica na seção **Consultas pontuais** da lista, fora dos indicadores. Nunca entra no

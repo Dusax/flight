@@ -293,6 +293,8 @@ class ScrapeResult:
     offers: List[Offer]
     url: str
     price_level: Optional[str] = None  # low / typical / high (insight do Google)
+    typical_low: Optional[float] = None   # faixa de preço típica da rota (insight do Google; só ida e ida e volta)
+    typical_high: Optional[float] = None
     cards_no_price: int = 0  # listados sem preço (o Google mostra 'price unavailable')
     cards_unreadable: int = 0  # cards que o parser não entendeu (layout pode ter mudado)
     warnings: List[str] = field(default_factory=list)

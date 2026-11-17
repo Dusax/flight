@@ -146,7 +146,9 @@ const ptBag = (s) => s.replace(/^(\d+) free carry-on$/, "$1 bagagem de mão grá
 const googleUrl = (u) => (typeof u === "string" && /^https:\/\/www\.google\.com\//.test(u) ? u : null); // só links do Google
 // compatível com dashboard.json antigo (sem `legs` nas combinações)
 const firstLeg = (w, c) => (c.legs && c.legs[0]) || { origin: w.origin, destination: w.destination };
-const typicalOf = (c) => c.offers?.find((o) => o.booking && o.booking.typical_low != null)?.booking || null;
+/* faixa de preço típica da rota: a da tela de compra (se houver) ou a do painel de preços do Google, que vem em toda busca só ida / ida e volta */
+const typicalOf = (c) => c.offers?.find((o) => o.booking && o.booking.typical_low != null)?.booking
+  || (c.typical_low != null ? { typical_low: c.typical_low, typical_high: c.typical_high, verdict: c.price_level } : null);
 
 /* ---------- cidades (a lista completa de aeroportos vem de airports.js) ---------- */
 const cityOf = (c) => Airports.cityOf(c);
@@ -338,6 +340,7 @@ function tripCard(w) {
   } else {
     body = `<div class="price-row"><div><div class="price-k">${esc(totalLabel(w))}</div><div class="price num${bigCls(money(c.min_price, w.currency))}">${money(c.min_price, w.currency)}</div>
         <div class="price-d">${deltaHtml(c.min_price, c.prev_price, w.currency, "vs. anterior")}</div></div>${spark(c.history)}</div>
+      ${typicalOf(c) ? `<div class="muted small tcard-typ" title="Faixa em que costumam ficar os voos mais baratos desta rota, segundo o Google">Faixa típica ${money(typicalOf(c).typical_low, w.currency)} a ${money(typicalOf(c).typical_high, w.currency)}</div>` : ""}
       <div class="chips">${w.combos.length > 1 ? `<span class="chip good">${icon("cal")}Melhor data: ${esc(dateSpan(c))}</span>` : ""}${metaChips(w)}</div>
       <div class="facts">
         <div><div class="fact-k">${icon("clock")}Mais rápida</div><div class="fact-v num">${hm(c.fastest_min)}</div></div>
@@ -471,7 +474,8 @@ function paneVoos(w, c) {
   list = [...list].sort((a, b) => ((a[f.sort] ?? "") > (b[f.sort] ?? "") ? 1 : (a[f.sort] ?? "") < (b[f.sort] ?? "") ? -1 : 0) || a.price - b.price);
   const shown = list.slice(0, f.limit);
   const note = isMulti(w) || w.return_date ? `<p class="muted small">Estes são os voos do 1º trecho (${esc(firstLeg(w, c).origin)} → ${esc(firstLeg(w, c).destination)}). O preço é o total da viagem inteira com esse voo: o Google só mostra os demais trechos depois de escolher o voo no site.</p>` : "";
-  return `${note}<div class="toolbar">
+  const gauge = rangeHtml(c.min_price, typicalOf(c), w.currency);
+  return `${note}${gauge ? `<section class="panel panel-pad gauge-top">${gauge}</section>` : ""}<div class="toolbar">
       <label>Ordenar <select data-flt="sort"><option value="price" ${f.sort === "price" ? "selected" : ""}>Menor preço</option><option value="duration_min" ${f.sort === "duration_min" ? "selected" : ""}>Mais rápido</option><option value="dep_time" ${f.sort === "dep_time" ? "selected" : ""}>Horário de saída</option></select></label>
       <label>Companhia <select data-flt="airline"><option value="">Todas</option>${airlines.map((a) => `<option ${f.airline === a ? "selected" : ""}>${esc(a)}</option>`).join("")}</select></label>
       <label><input type="checkbox" data-flt="direct" ${f.direct ? "checked" : ""}> Só diretos</label>

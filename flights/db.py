@@ -57,6 +57,8 @@ CREATE TABLE IF NOT EXISTS searches (
     min_nonstop  REAL,                    -- menor preço entre os voos diretos
     fastest_min  INTEGER,                 -- menor duração (min) entre os voos coletados
     price_level  TEXT,                    -- low | typical | high (avaliação do Google)
+    typical_low  REAL,                    -- faixa de preço típica da rota (Google; só ida e ida e volta)
+    typical_high REAL,
     url          TEXT
 );
 
@@ -117,7 +119,8 @@ def _migrate(conn) -> None:
         "watches": {"every_hours": "INTEGER", "legs_json": "TEXT", "compare_separate": "INTEGER NOT NULL DEFAULT 0",
                     "booking_top": "INTEGER NOT NULL DEFAULT 0", "date_ranges": "TEXT",
                     "budget": "INTEGER NOT NULL DEFAULT 40", "once": "INTEGER NOT NULL DEFAULT 0"},
-        "searches": {"min_nonstop": "REAL", "fastest_min": "INTEGER", "legs_json": "TEXT", "leg_index": "INTEGER"},
+        "searches": {"min_nonstop": "REAL", "fastest_min": "INTEGER", "legs_json": "TEXT", "leg_index": "INTEGER",
+                     "typical_low": "REAL", "typical_high": "REAL"},
         "offers": {"cabin": "TEXT", "aircraft": "TEXT", "co2_kg": "INTEGER", "co2_diff_pct": "INTEGER",
                    "overnight": "INTEGER", "often_delayed": "INTEGER", "segments_json": "TEXT", "booking_json": "TEXT"},
     }
@@ -285,8 +288,8 @@ def save_search(
     cur = conn.execute(
         """INSERT INTO searches (watch_id, scraped_at, origin, destination, depart_date, return_date, trip_type,
                                  legs_json, leg_index, adults, cabin, max_stops, currency, status, error, offers_count, min_price,
-                                 min_nonstop, fastest_min, price_level, url)
-           VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)""",
+                                 min_nonstop, fastest_min, price_level, typical_low, typical_high, url)
+           VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)""",
         (watch_id, utcnow(), spec.origin, spec.destination, spec.depart_date.isoformat(),
          spec.return_date.isoformat() if spec.return_date else None, spec.trip_type,
          spec.legs_json, spec.leg_index, spec.adults, spec.cabin, spec.max_stops, spec.currency, status, error, len(all_offers),
@@ -294,6 +297,7 @@ def save_search(
          min((o.price for o in all_offers if o.stops == 0), default=None),
          min((o.duration_min for o in all_offers if o.duration_min), default=None),
          result.price_level if result else None,
+         result.typical_low if result else None, result.typical_high if result else None,
          (result.url if result else url)),
     )
     search_id = cur.lastrowid
@@ -496,7 +500,7 @@ def _offer_dict(r: sqlite3.Row) -> dict:
 def _rows_for(conn, watch_id: int, spec: SearchSpec) -> List[sqlite3.Row]:
     """Coletas ok de uma busca exata (datas, trechos, passageiros, classe...), da mais antiga à mais nova."""
     rows = conn.execute(
-        """SELECT id, scraped_at, min_price, min_nonstop, fastest_min, price_level, offers_count
+        """SELECT id, scraped_at, min_price, min_nonstop, fastest_min, price_level, offers_count, typical_low, typical_high
            FROM searches
            WHERE watch_id = ? AND status = 'ok' AND depart_date = ?
              AND COALESCE(return_date,'') = COALESCE(?, '') AND COALESCE(legs_json,'') = COALESCE(?, '')
@@ -628,6 +632,7 @@ def build_dashboard(conn, today: Optional[date] = None, favorites=None) -> Dict:
                 "scraped_at": cur["scraped_at"], "min_price": cur["min_price"],
                 "min_nonstop": cur["min_nonstop"], "fastest_min": cur["fastest_min"],
                 "price_level": cur["price_level"], "offers_count": cur["offers_count"],
+                "typical_low": cur["typical_low"], "typical_high": cur["typical_high"],
                 "first_price": rows[0]["min_price"], "first_at": rows[0]["scraped_at"],
                 "prev_price": rows[-2]["min_price"] if len(rows) > 1 else None,
                 "history": [[r["scraped_at"], r["min_price"]] for r in rows[-HISTORY_POINTS:]],

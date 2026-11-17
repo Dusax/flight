@@ -226,6 +226,22 @@ def parse_booking(text: Optional[str], rows: Optional[List[Dict]] = None, url: O
     return out
 
 
+def parse_insight(text: str) -> Dict:
+    """Painel 'View price history' da lista de resultados (vale para só ida e ida e volta; multi-destino não tem):
+    'Prices are currently typical for your search', 'The least expensive flights for similar trips to X usually
+    cost between R$2,350–2,850.' e 'R$2,815 is typical'. Devolve só o que achou."""
+    out: Dict = {}
+    m = re.search(r"Prices are currently\s+(low|typical|high)", text, re.I)
+    if m:
+        out["level"] = m.group(1).lower()
+    m = re.search(r"usually cost between\s+\D*?([\d.,]+)\s*[–-]\s*\D*?([\d.,]+)", text)
+    if m:
+        lo, hi = _to_price(m.group(1)), _to_price(m.group(2))
+        if lo and hi and hi > lo:
+            out["typical_low"], out["typical_high"] = lo, hi
+    return out
+
+
 def _detail_fields(card: Dict) -> Dict:
     """Campos de detalhe do Offer a partir do que o scraper coletou (podem faltar)."""
     d = parse_detail(card.get("detail")) if card.get("detail") else None

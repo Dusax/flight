@@ -250,6 +250,14 @@ try:
         pg.click(f'.tcard[data-open-trip="{oid}"]'); pg.wait_for_selector(".trip-head"); pg.click("[data-act=remove]"); pg.wait_for_selector(".tcard")
         print("12d. consulta pontual: botão próprio, sem recorrência, seção separada, fora dos indicadores, virar monitoramento, limpar todas")
 
+        # ---- faixa de preço típica em qualquer busca (não só nas com tela de compra) ----
+        pg.goto(base + "/#/"); pg.wait_for_selector(".tcard")
+        assert "Faixa típica R$ 5.200 a R$ 7.400" in pg.inner_text('.tcard[data-open-trip="2"]').replace("\xa0", " ")
+        assert "Faixa típica" not in pg.inner_text('.tcard[data-open-trip="1"]'), "multi-destino não tem faixa (o Google não mostra)"
+        pg.goto(base + "/#/viagem/2/resumo"); pg.wait_for_selector(".range"); assert "Faixa de preço típica desta rota" in pg.inner_text(".range")
+        pg.goto(base + "/#/viagem/2/voos"); pg.wait_for_selector(".gauge-top .range-bar"); assert pg.locator(".gauge-top .range-pin").count() == 1
+        print("12e. faixa de preço típica aparece em ida e volta (resumo, voos e cartão), sem depender da tela de compra")
+
         pg.goto(base + "/#/viagem/1/voos"); pg.wait_for_selector(".fl"); assert not pg.is_visible("#dlg-login")
         print("13. link direto + sessão mantida após recarregar")
         ctx.clear_cookies(); pg.click('[data-nav="/"]'); pg.click('.tcard [data-act=run]')

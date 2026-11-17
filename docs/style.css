@@ -445,3 +445,7 @@ label.f.check input { width: auto; min-height: 0; }
 }
 
 .section-title .btn { margin-left: auto; text-transform: none; letter-spacing: 0; font-weight: 600; }
+
+.gauge-top { margin-bottom: 12px; }
+.gauge-top .range { margin: 0; }
+.tcard-typ { margin-top: -4px; }
