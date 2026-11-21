@@ -231,13 +231,26 @@ function metaChips(w) {
   if (w.max_stops != null) out.push(`<span class="chip">${w.max_stops === 0 ? "Só direto" : `Até ${w.max_stops} escala${w.max_stops > 1 ? "s" : ""}`}</span>`);
   return out.join("");
 }
+/* Próxima coleta calculada aqui (o JSON do painel só atualiza a cada coleta): horário do cron pendente/seguinte, ou o que veio no JSON */
+function clientNext(w) {
+  if (w.schedule && window.Schedule) {
+    try {
+      const S = window.Schedule, s = S.parse(w.schedule), now = Date.now(), slot = S.latestSlot(s, now);
+      const last = w.last_run_at ? Date.parse(w.last_run_at) : null;
+      const t = slot !== null && (last == null || last < slot) ? slot : S.nextSlot(s, now);
+      return t == null ? null : new Date(t).toISOString();
+    } catch { return null; }
+  }
+  return w.next_run_at;
+}
 function nextText(w) {
   if (w.once) return "Consulta pontual: não se repete";
   if (!w.active) return "Coleta pausada";
   if (w.expired) return "Viagem já passou";
-  if (!w.every_hours) return "Só quando você pedir";
-  if (!w.next_run_at) return "";
-  return new Date(w.next_run_at) <= new Date() ? "Próxima coleta: na próxima rodada" : `Próxima coleta ${fmtStamp(w.next_run_at)}`;
+  if (!w.every_hours && !w.schedule) return "Só quando você pedir";
+  const nx = clientNext(w);
+  if (!nx) return "";
+  return new Date(nx) <= new Date() ? "Próxima coleta: na próxima rodada" : `Próxima coleta ${fmtStamp(nx)}`;
 }
 const inHours = (ts) => {
   const s = (new Date(ts) - Date.now()) / 1000;
@@ -317,7 +330,7 @@ function kpisHtml(ws) {
     if (dd < -0.5 && (!drop || dd < drop.dd)) drop = { w, c, dd };
   }
   const last = ws.map((w) => w.last_run_at).filter(Boolean).sort().pop();
-  const nexts = active.filter((w) => w.every_hours && w.next_run_at).map((w) => w.next_run_at).sort();
+  const nexts = active.filter((w) => (w.every_hours || w.schedule) && clientNext(w)).map(clientNext).sort();
   const bad = ws.filter(failed).length;
   const cur = ws[0]?.currency;
   return `<div class="kpis">
@@ -642,7 +655,7 @@ function paneComparar(w, c) {
 /* ---- configuração ---- */
 function configPanel(w) {
   const kv = (k, v) => `<div><div class="kv-k">${k}</div><div class="kv-v">${v}</div></div>`;
-  const every = w.once ? "não: consulta pontual (roda só quando você pede)" : w.every_hours ? (EVERY[w.every_hours] || `a cada ${w.every_hours} h`) : "só quando você pedir";
+  const every = w.once ? "não: consulta pontual (roda só quando você pede)" : w.schedule && window.Schedule ? `${window.Schedule.describe(w.schedule)} (horário de Brasília)` : w.every_hours ? (EVERY[w.every_hours] || `a cada ${w.every_hours} h`) : "só quando você pedir";
   return `<section class="panel panel-pad"><div class="kv">
     ${kv("Tipo", esc(kindLabel(w)))}${kv("Trajeto", esc(isMulti(w) ? cityLine(w) : `${cityOf(w.origin)} → ${cityOf(w.destination)}`))}
     ${kv("Datas", esc(datesDetail(w)))}
@@ -1020,6 +1033,58 @@ formW.use_range.addEventListener("change", () => {
   syncTrip();
 });
 
+/* ---------- horários de coleta (cron, fuso de Brasília) ---------- */
+const schedOn = () => !state.dlgOnce && formW.every_hours.value === "custom";
+const SCHED_PRESETS = { night: { from: 22, to: 6, every: 2, days: [0, 1, 2, 3, 4, 5, 6] }, dawn: { from: 2, to: 6, every: 1, days: [0, 1, 2, 3, 4, 5, 6] },
+  work: { from: 9, to: 18, every: 3, days: [1, 2, 3, 4, 5] }, all: { from: null, to: null, every: 6, days: [0, 1, 2, 3, 4, 5, 6] } };
+function schedSetSimple(d) {
+  formW.sched_from.value = d.from == null ? "" : String(d.from); formW.sched_to.value = String(d.to ?? d.from ?? 6); formW.sched_every.value = String(d.every);
+  formW.querySelectorAll("[name=sched_day]").forEach((c) => { c.checked = d.days.includes(+c.value); });
+  formW.sched_to.disabled = d.from == null;
+}
+function schedSimple() {
+  const from = formW.sched_from.value === "" ? null : +formW.sched_from.value;
+  return { from, to: from == null ? null : +formW.sched_to.value, every: +formW.sched_every.value, days: [...formW.querySelectorAll("[name=sched_day]:checked")].map((c) => +c.value) };
+}
+const fmtSlot = (ms) => new Date(ms).toLocaleString("pt-BR", { timeZone: window.Schedule.TZ, weekday: "short", day: "numeric", month: "short", hour: "2-digit", minute: "2-digit" }).replace(/\./g, "");
+function schedPreview() {
+  const box = $("#sched-info"), expr = formW.sched_cron.value.trim();
+  const set = (msg, bad) => { box.className = `plan-info${bad ? " bad" : ""}`; box.textContent = msg; };
+  if (!expr) return set("Escolha os horários ou escreva a expressão cron.", false);
+  try {
+    const next = window.Schedule.nextSlots(expr, 6);
+    if (!next.length) return set("Esta expressão nunca coleta (confira mês e dia).", true);
+    set(`${formW.dataset.advanced ? "Modo avançado (o formulário simples não representa esta expressão). " : ""}Próximas coletas (Brasília): ${next.map(fmtSlot).join(" · ")}. A coleta roda de hora em hora, uns minutos depois do horário cheio.`, false);
+  } catch (e) { set(e.message, true); }
+}
+function schedFromSimple() {
+  const d = schedSimple();
+  formW.sched_to.disabled = d.from == null;
+  if (!d.days.length) { $("#sched-info").className = "plan-info bad"; $("#sched-info").textContent = "Escolha ao menos um dia da semana."; return; }
+  formW.sched_cron.value = window.Schedule.compile(d);
+  schedPreview();
+}
+function schedFromCron() {
+  const expr = formW.sched_cron.value.trim(), d = expr ? window.Schedule.decompile(expr) : null;
+  formW.dataset.advanced = expr && !d ? "1" : "";
+  const simpleFields = [formW.sched_from, formW.sched_to, formW.sched_every, ...formW.querySelectorAll("[name=sched_day]")];
+  if (d) { schedSetSimple(d); simpleFields.forEach((x) => { x.disabled = false; }); formW.sched_to.disabled = d.from == null; }
+  else if (expr) simpleFields.forEach((x) => { x.disabled = true; });   // expressão avançada: o formulário simples não a representa
+  schedPreview();
+}
+function schedSync() {
+  $("#sched-box").hidden = !schedOn();
+  if (schedOn() && !formW.sched_cron.value.trim()) { schedSetSimple(SCHED_PRESETS.night); schedFromSimple(); }
+  else if (schedOn()) schedFromCron();
+}
+formW.every_hours.addEventListener("change", schedSync);
+$("#sched-box").addEventListener("input", (e) => { if (e.target.name === "sched_cron") schedFromCron(); else if (e.target.name?.startsWith("sched_")) schedFromSimple(); });
+$("#sched-box").addEventListener("click", (e) => {
+  const b = e.target.closest("[data-sched-preset]"); if (!b) return;
+  formW.querySelectorAll("#sched-box input, #sched-box select").forEach((x) => { x.disabled = false; });
+  schedSetSimple(SCHED_PRESETS[b.dataset.schedPreset]); schedFromSimple();
+});
+
 /* mode: "once" (consulta pontual), "promote" (pontual -> monitoramento) ou nada (viagem monitorada) */
 function openWatchDialog(w, mode) {
   state.editingId = w ? w.id : null;
@@ -1028,6 +1093,7 @@ function openWatchDialog(w, mode) {
   $("#dlg-watch-title").textContent = state.dlgOnce ? (w ? `Editar consulta pontual ${routeText(w)}` : "Consulta pontual")
     : mode === "promote" ? `Monitorar ${routeText(w)}` : w ? `Editar viagem ${routeText(w)}` : "Nova viagem";
   for (const id of ["#name-wrap", "#every-wrap", "#now-wrap"]) $(id).hidden = state.dlgOnce;
+  formW.sched_cron.value = "";
   $("#once-note").hidden = !state.dlgOnce;
   $("#watch-save").textContent = state.dlgOnce ? "Consultar agora" : "Salvar";
   formW.depart_date.min = todayIso(); formW.return_date.min = todayIso(); formW.depart_to.min = todayIso(); formW.return_to.min = todayIso();
@@ -1038,10 +1104,11 @@ function openWatchDialog(w, mode) {
     if (!isMulti(w)) { pickerSet(formW.origin, w.origin); pickerSet(formW.destination, w.destination); formW.depart_date.value = w.depart_date; formW.return_date.value = w.return_date || ""; formW.depart_to.value = w.depart_to || ""; formW.return_to.value = w.return_to || ""; }
     formW.use_range.checked = hasRange(w); formW.budget.value = String(w.budget || 40);
     formW.adults.value = w.adults; formW.cabin.value = w.cabin; formW.max_stops.value = w.max_stops ?? "";
-    formW.flex_days.value = String(w.flex_days || 0); formW.every_hours.value = w.every_hours ? String(w.every_hours) : (mode === "promote" ? "24" : "");
+    formW.flex_days.value = String(w.flex_days || 0); formW.every_hours.value = w.schedule ? "custom" : w.every_hours ? String(w.every_hours) : (mode === "promote" ? "24" : "");
+    if (w.schedule) { formW.sched_cron.value = w.schedule; schedFromCron(); }
     formW.compare_separate.checked = !!w.compare_separate; formW.booking_top.value = String(w.booking_top ?? 0);
   }
-  syncTrip(); dlgW.showModal();
+  syncTrip(); schedSync(); dlgW.showModal();
 }
 $("#watch-cancel").onclick = () => dlgW.close();
 formW.addEventListener("submit", async (e) => {
@@ -1054,7 +1121,7 @@ formW.addEventListener("submit", async (e) => {
     origin: "", destination: "", depart_date: "", return_date: null, legs: null,
     flex_days: useRange() ? 0 : +f.get("flex_days"), budget: useRange() ? +f.get("budget") : 40, adults: +f.get("adults"), cabin: f.get("cabin"),
     max_stops: f.get("max_stops") === "" ? null : +f.get("max_stops"), currency: "BRL",
-    every_hours: !state.dlgOnce && f.get("every_hours") ? +f.get("every_hours") : null, once: state.dlgOnce,
+    every_hours: !state.dlgOnce && f.get("every_hours") && f.get("every_hours") !== "custom" ? +f.get("every_hours") : null, schedule: null, once: state.dlgOnce,
     compare_separate: kind !== "oneway" && formW.compare_separate.checked, booking_top: +f.get("booking_top"),
     active: state.editingId != null ? (state.watches.find((w) => w.id === state.editingId)?.active ?? true) : true,
   };
@@ -1082,6 +1149,10 @@ formW.addEventListener("submit", async (e) => {
     const ends = kind === "multi" ? item.legs.map((l) => l.date_to) : [item.depart_to, item.return_to];
     if (!ends.some((x) => x && x !== "")) return fail("Informe o fim do período em pelo menos um trecho, ou desmarque “Pesquisar um período de datas”.");
     if (!planInfo()) return fail($("#plan-info").textContent);
+  }
+  if (!state.dlgOnce && f.get("every_hours") === "custom") {   // horários em cron: o mesmo parser do servidor
+    try { item.schedule = window.Schedule.parse(formW.sched_cron.value.trim()).expr; } catch (e) { return fail(e.message); }
+    if (!formW.sched_cron.value.trim()) return fail("Informe os horários de coleta.");
   }
   err.textContent = "";
   const runNow = state.dlgOnce || f.get("run_now") === "on";

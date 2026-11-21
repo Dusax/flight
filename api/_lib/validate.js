@@ -2,6 +2,8 @@
 // Só passam os campos conhecidos, com tipo e limite verificados: o servidor nunca grava
 // no GitHub algo que o coletor Python não entenda.
 
+import { parse as parseSchedule } from "../../docs/schedule.js";   // o mesmo parser do painel (horários em cron)
+
 const IATA = /^[A-Z]{3}$/;
 const ISO_DATE = /^\d{4}-\d{2}-\d{2}$/;
 const CABINS = new Set(["economy", "premium", "business", "first"]);
@@ -107,7 +109,14 @@ export function normalizeWatch(w) {
   if (w.every_hours != null && !int(w.every_hours, 1, 24 * 30)) throw new Error("frequência: 1 a 720 horas");
   out.every_hours = w.every_hours ?? null;
   out.once = w.once === true;               // consulta pontual: roda quando pedida, nunca no agendamento
-  if (out.once) out.every_hours = null;
+  // horários de coleta em cron (fuso de Brasília): mandam sobre "a cada N horas"
+  out.schedule = null;
+  if (w.schedule != null && w.schedule !== "") {
+    if (typeof w.schedule !== "string" || w.schedule.length > 100) throw new Error("horários: expressão inválida");
+    out.schedule = parseSchedule(w.schedule).expr;   // lança o erro em português
+    out.every_hours = null;
+  }
+  if (out.once) { out.every_hours = null; out.schedule = null; }
   out.compare_separate = w.compare_separate === true;
   if (!int(w.booking_top ?? 0, 0, 10)) throw new Error("detalhar compra: 0 a 10");
   out.booking_top = w.booking_top ?? 0;

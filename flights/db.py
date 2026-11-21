@@ -7,6 +7,7 @@ from pathlib import Path
 from typing import Dict, Iterable, List, Optional, Tuple
 
 from . import planner
+from . import schedule as sched
 from .models import (BUDGET_MAX, BUDGET_MIN, DEFAULT_BUDGET, MAX_COMBOS, Leg, ScrapeResult, SearchSpec, combo_dates, legs_from_json, normalize_ends,
                      parse_date, parse_iata, plan_specs)
 
@@ -23,6 +24,7 @@ CREATE TABLE IF NOT EXISTS watches (
     cabin        TEXT NOT NULL DEFAULT 'economy',
     max_stops    INTEGER,
     currency     TEXT NOT NULL DEFAULT 'BRL',
+    schedule     TEXT,                    -- horários de coleta em cron (fuso de Brasília); manda sobre every_hours
     once         INTEGER NOT NULL DEFAULT 0,   -- consulta pontual: roda quando pedida, nunca no agendamento
     budget       INTEGER NOT NULL DEFAULT 40,  -- consultas por coleta quando há período de datas
     date_ranges  TEXT,                    -- fim do período de cada trecho: ["2026-12-25", null, ...] (NULL = sem período)
@@ -118,7 +120,7 @@ def _migrate(conn) -> None:
     wanted = {
         "watches": {"every_hours": "INTEGER", "legs_json": "TEXT", "compare_separate": "INTEGER NOT NULL DEFAULT 0",
                     "booking_top": "INTEGER NOT NULL DEFAULT 0", "date_ranges": "TEXT",
-                    "budget": "INTEGER NOT NULL DEFAULT 40", "once": "INTEGER NOT NULL DEFAULT 0"},
+                    "budget": "INTEGER NOT NULL DEFAULT 40", "once": "INTEGER NOT NULL DEFAULT 0", "schedule": "TEXT"},
         "searches": {"min_nonstop": "REAL", "fastest_min": "INTEGER", "legs_json": "TEXT", "leg_index": "INTEGER",
                      "typical_low": "REAL", "typical_high": "REAL"},
         "offers": {"cabin": "TEXT", "aircraft": "TEXT", "co2_kg": "INTEGER", "co2_diff_pct": "INTEGER",
@@ -155,19 +157,22 @@ def watch_plan(row, today: Optional[date] = None, include_past: bool = False) ->
 
 def add_watch(conn, spec: SearchSpec, flex_days: int = 0, label: Optional[str] = None,
               every_hours: Optional[int] = None, compare_separate: bool = False, booking_top: int = 0,
-              ends=None, budget: int = DEFAULT_BUDGET, once: bool = False) -> int:
+              ends=None, budget: int = DEFAULT_BUDGET, once: bool = False, schedule: Optional[str] = None) -> int:
+    if schedule:
+        schedule = sched.parse(schedule).expr
+        every_hours = None
     ends = normalize_ends(spec, ends)
     check_plan(spec, flex_days, ends)
     check_budget(budget)
     cur = conn.execute(
         """INSERT INTO watches (label, origin, destination, depart_date, return_date, flex_days,
                                 adults, cabin, max_stops, currency, every_hours, legs_json, compare_separate,
-                                booking_top, date_ranges, budget, once, created_at)
-           VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)""",
+                                booking_top, date_ranges, budget, once, schedule, created_at)
+           VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)""",
         (label, spec.origin, spec.destination, spec.depart_date.isoformat(),
          spec.return_date.isoformat() if spec.return_date else None, flex_days,
          spec.adults, spec.cabin, spec.max_stops, spec.currency, every_hours, spec.legs_json,
-         int(compare_separate), booking_top, ends_to_json(ends), budget, int(once), utcnow()),
+         int(compare_separate), booking_top, ends_to_json(ends), budget, int(once), schedule, utcnow()),
     )
     conn.commit()
     return cur.lastrowid
@@ -379,8 +384,29 @@ def last_run_at(conn, watch_id: int) -> Optional[str]:
     return row["t"]
 
 
-def next_run_at(row: sqlite3.Row, last: Optional[str]) -> Optional[str]:
-    if not row["active"] or not row["every_hours"]:
+def _fmt_ts(t: datetime) -> str:
+    return t.astimezone(timezone.utc).strftime("%Y-%m-%dT%H:%M:%SZ")
+
+
+def row_schedule(row: sqlite3.Row) -> Optional["sched.Schedule"]:
+    expr = row["schedule"] if "schedule" in row.keys() else None
+    return sched.parse(expr) if expr else None
+
+
+def next_run_at(row: sqlite3.Row, last: Optional[str], now: Optional[datetime] = None) -> Optional[str]:
+    """Quando a busca deve ser coletada: o horário cron pendente/próximo ou, sem cron, `every_hours` após a última coleta."""
+    if not row["active"] or row["once"]:
+        return None
+    s = row_schedule(row)
+    if s is not None:
+        now = now or datetime.now(timezone.utc)
+        lr = _parse_ts(last) if last else None
+        slot = sched.latest_slot(s, now)
+        if slot is not None and (lr is None or lr < slot):
+            return _fmt_ts(slot)                     # horário já chegou e ainda não foi atendido: na próxima rodada
+        nxt = sched.next_slot(s, now)
+        return _fmt_ts(nxt) if nxt else None
+    if not row["every_hours"]:
         return None
     if not last:
         return utcnow()
@@ -388,11 +414,18 @@ def next_run_at(row: sqlite3.Row, last: Optional[str]) -> Optional[str]:
 
 
 def is_due(conn, row: sqlite3.Row, now: Optional[datetime] = None) -> bool:
-    """Ativa, com frequência definida, e a última coleta (de qualquer status) é mais antiga que ela."""
-    nxt = next_run_at(row, last_run_at(conn, row["id"]))
+    """Ativa e com recorrência: pelo cron (há um horário ≤ agora, dentro da folga, ainda sem coleta) ou, sem cron,
+    quando a última coleta (de qualquer status) é mais antiga que `every_hours`."""
+    now = now or datetime.now(timezone.utc)
+    if not row["active"] or row["once"]:
+        return False
+    s = row_schedule(row)
+    if s is not None:
+        last = last_run_at(conn, row["id"])
+        return sched.due(s, now, _parse_ts(last) if last else None)
+    nxt = next_run_at(row, last_run_at(conn, row["id"]), now)
     if nxt is None:
         return False
-    now = now or datetime.now(timezone.utc)
     return _parse_ts(nxt) - timedelta(seconds=DUE_TOLERANCE_S) <= now
 
 
@@ -443,8 +476,12 @@ def sync_watches(conn, items: List[dict]) -> Tuple[int, List[str]]:
             budget = int(it.get("budget") or DEFAULT_BUDGET)
             check_budget(budget)
             once = bool(it.get("once"))
+            schedule = (it.get("schedule") or "").strip() or None
+            if schedule:
+                schedule = sched.parse(schedule).expr   # ValueError (pt-BR) vira aviso e o item é ignorado
+                every = None                            # o cron manda sobre "a cada N horas"
             if once:
-                every = None   # consulta pontual nunca é agendada
+                every, schedule = None, None            # consulta pontual nunca é agendada
             if every is not None and every < 1:
                 raise ValueError("every_hours deve ser >= 1")
             if not 0 <= booking_top <= 10:
@@ -455,16 +492,16 @@ def sync_watches(conn, items: List[dict]) -> Tuple[int, List[str]]:
         vals = (spec.origin, spec.destination, spec.depart_date.isoformat(),
                 spec.return_date.isoformat() if spec.return_date else None, flex, spec.adults, spec.cabin,
                 spec.max_stops, spec.currency, every, spec.legs_json, int(bool(it.get("compare_separate"))),
-                booking_top, int(it.get("active", True)), (it.get("label") or None), ends_to_json(ends), budget, int(once))
+                booking_top, int(it.get("active", True)), (it.get("label") or None), ends_to_json(ends), budget, int(once), schedule)
         exists = conn.execute("SELECT 1 FROM watches WHERE id = ?", (wid,)).fetchone()
         if exists:
             conn.execute("""UPDATE watches SET origin=?, destination=?, depart_date=?, return_date=?, flex_days=?,
                             adults=?, cabin=?, max_stops=?, currency=?, every_hours=?, legs_json=?,
-                            compare_separate=?, booking_top=?, active=?, label=?, date_ranges=?, budget=?, once=? WHERE id=?""", vals + (wid,))
+                            compare_separate=?, booking_top=?, active=?, label=?, date_ranges=?, budget=?, once=?, schedule=? WHERE id=?""", vals + (wid,))
         else:
             conn.execute("""INSERT INTO watches (origin, destination, depart_date, return_date, flex_days, adults,
                             cabin, max_stops, currency, every_hours, legs_json, compare_separate, booking_top,
-                            active, label, date_ranges, budget, once, id, created_at) VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)""",
+                            active, label, date_ranges, budget, once, schedule, id, created_at) VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)""",
                          vals + (wid, utcnow()))
         keep.append(wid)
     if keep:
@@ -654,7 +691,7 @@ def build_dashboard(conn, today: Optional[date] = None, favorites=None) -> Dict:
             "id": w["id"], "label": w["label"], "origin": w["origin"], "destination": w["destination"],
             "depart_date": w["depart_date"], "return_date": w["return_date"], "flex_days": w["flex_days"],
             "adults": w["adults"], "cabin": w["cabin"], "max_stops": w["max_stops"], "currency": w["currency"],
-            "every_hours": w["every_hours"], "active": bool(w["active"]), "once": bool(w["once"]),
+            "every_hours": w["every_hours"], "active": bool(w["active"]), "once": bool(w["once"]), "schedule": w["schedule"],
             "trip_type": spec.trip_type, "route": spec.route(),
             "legs": [{"origin": l.origin, "destination": l.destination, "date": l.date.isoformat(),
                       "date_to": ends[i].isoformat() if ends[i] else None} for i, l in enumerate(spec.legs)] or None,

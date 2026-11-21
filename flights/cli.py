@@ -268,6 +268,14 @@ def cmd_run(args) -> int:
     return 0 if ok or not failed else 1
 
 
+def cmd_due(args) -> int:
+    """Usado pelo workflow para pular a instalação do Chromium nas rodadas em que nada vence."""
+    conn = db.connect(args.db)
+    n = sum(1 for r in db.list_watches(conn, only_active=True) if db.is_due(conn, r))
+    print(f"{n} busca(s) vencida(s).")
+    return 0 if n else 1
+
+
 def cmd_sync(args) -> int:
     """Espelha um watches.json (editado pela página) na tabela de buscas monitoradas."""
     path = Path(args.file)
@@ -309,7 +317,8 @@ def cmd_watch(args) -> int:
         spec = spec_from_args(args) if args.watch_cmd == "add" else multi_spec_from_args(args)
         wid = db.add_watch(conn, spec, flex_days=args.flex, label=args.label, every_hours=args.every,
                            compare_separate=args.compare_separate, booking_top=args.booking,
-                           ends=ends_from_args(args, spec), budget=getattr(args, "budget", 40))
+                           ends=ends_from_args(args, spec), budget=getattr(args, "budget", 40),
+                           schedule=getattr(args, "schedule", None))
         print(f"Monitoramento #{wid} criado: {spec.label()}"
               + (f" (±{args.flex} dias)" if args.flex else "")
               + (f", a cada {args.every}h" if args.every else ", só manual"))
@@ -322,7 +331,7 @@ def cmd_watch(args) -> int:
             ["id", "rota", "ida", "volta/fim", "±dias", "adultos", "classe", "esc. máx", "cada", "extras", "ativo", "nome"],
             [[r["id"], db.row_route(r), r["depart_date"] + (f"…{db.watch_ends(r)[0].isoformat()}" if db.watch_ends(r)[0] else ""), db.watch_to_spec(r).end_date.isoformat() if db.watch_to_spec(r).end_date != db.watch_to_spec(r).depart_date else "-", r["flex_days"],
               r["adults"], r["cabin"], "-" if r["max_stops"] is None else r["max_stops"],
-              f"{r['every_hours']}h" if r["every_hours"] else "manual",
+              r["schedule"] or (f"{r['every_hours']}h" if r["every_hours"] else "manual"),
               ",".join(x for x in ("separado" if r["compare_separate"] else "", f"compra×{r['booking_top']}" if r["booking_top"] else "") if x) or "-",
               "sim" if r["active"] else "não", r["label"] or ""] for r in rows])
     elif args.watch_cmd == "remove":
@@ -489,6 +498,9 @@ def build_parser() -> argparse.ArgumentParser:
     scrape_opts(r)
     r.set_defaults(func=cmd_run)
 
+    du = sub.add_parser("due", help="diz quantas buscas vencem agora (código de saída 0 se alguma vence, 1 se nenhuma)")
+    du.set_defaults(func=cmd_due)
+
     sy = sub.add_parser("sync-watches", help="espelha um watches.json no banco (usado pelo GitHub Actions)")
     sy.add_argument("file", help="ex.: data/watches.json")
     sy.set_defaults(func=cmd_sync)
@@ -504,6 +516,8 @@ def build_parser() -> argparse.ArgumentParser:
     wa.add_argument("--flex", type=int, default=0, metavar="N", help="busca ±N dias em torno da ida a cada run")
     wa.add_argument("--label", help="nome livre, ex.: 'Lisboa natal'")
     wa.add_argument("--every", type=int, metavar="HORAS", help="coletar a cada N horas no `run --due` (sem isso: só manual)")
+    wa.add_argument("--schedule", metavar="CRON",
+                    help='horários de coleta em cron, fuso de Brasília, hora cheia (ex.: "0 22,0,2,4,6 * * *" = 22h, 0h, 2h, 4h e 6h); manda sobre --every')
     wa.add_argument("--budget", type=int, default=40, metavar="N",
                     help="com período de datas grande: no máximo N consultas por coleta (default 40); o resto fica para as próximas")
     wm = ws.add_parser("add-multi", help="cadastra uma viagem multi-destino")

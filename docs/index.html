@@ -124,9 +124,31 @@
           <option value="">Nunca (só quando eu pedir)</option>
           <option value="1">A cada 1 hora</option><option value="3">A cada 3 horas</option><option value="6">A cada 6 horas</option>
           <option value="12">A cada 12 horas</option><option value="24" selected>Todo dia</option><option value="48">A cada 2 dias</option><option value="168">Toda semana</option>
+          <option value="custom">Horários personalizados…</option>
         </select>
         <small>O agendador roda de hora em hora e pode atrasar alguns minutos.</small>
       </label>
+    </div>
+    <div class="sched" id="sched-box" hidden>
+      <div class="sched-presets" role="group" aria-label="Atalhos de horário">
+        <button type="button" class="btn sm" data-sched-preset="night">Noite e madrugada</button>
+        <button type="button" class="btn sm" data-sched-preset="dawn">Só madrugada</button>
+        <button type="button" class="btn sm" data-sched-preset="work">Horário comercial</button>
+        <button type="button" class="btn sm" data-sched-preset="all">Dia todo</button>
+      </div>
+      <div class="row">
+        <label class="f">Das<select name="sched_from"><option value="">Dia todo</option><option value="0">0h</option><option value="1">1h</option><option value="2">2h</option><option value="3">3h</option><option value="4">4h</option><option value="5">5h</option><option value="6">6h</option><option value="7">7h</option><option value="8">8h</option><option value="9">9h</option><option value="10">10h</option><option value="11">11h</option><option value="12">12h</option><option value="13">13h</option><option value="14">14h</option><option value="15">15h</option><option value="16">16h</option><option value="17">17h</option><option value="18">18h</option><option value="19">19h</option><option value="20">20h</option><option value="21">21h</option><option value="22">22h</option><option value="23">23h</option></select></label>
+        <label class="f">Às (inclusive)<select name="sched_to"><option value="0">0h</option><option value="1">1h</option><option value="2">2h</option><option value="3">3h</option><option value="4">4h</option><option value="5">5h</option><option value="6">6h</option><option value="7">7h</option><option value="8">8h</option><option value="9">9h</option><option value="10">10h</option><option value="11">11h</option><option value="12">12h</option><option value="13">13h</option><option value="14">14h</option><option value="15">15h</option><option value="16">16h</option><option value="17">17h</option><option value="18">18h</option><option value="19">19h</option><option value="20">20h</option><option value="21">21h</option><option value="22">22h</option><option value="23">23h</option></select></label>
+        <label class="f">Repetir a cada<select name="sched_every"><option value="1">1 hora</option><option value="2">2 horas</option><option value="3">3 horas</option><option value="4">4 horas</option><option value="6">6 horas</option><option value="12">12 horas</option></select></label>
+      </div>
+      <fieldset class="f sched-days"><legend>Dias da semana</legend>
+        <label><input type="checkbox" name="sched_day" value="1" checked> Seg</label><label><input type="checkbox" name="sched_day" value="2" checked> Ter</label><label><input type="checkbox" name="sched_day" value="3" checked> Qua</label><label><input type="checkbox" name="sched_day" value="4" checked> Qui</label><label><input type="checkbox" name="sched_day" value="5" checked> Sex</label><label><input type="checkbox" name="sched_day" value="6" checked> Sáb</label><label><input type="checkbox" name="sched_day" value="0" checked> Dom</label>
+      </fieldset>
+      <label class="f">Expressão cron (avançado)
+        <input name="sched_cron" spellcheck="false" autocomplete="off" autocapitalize="off" placeholder="0 22,0,2,4,6 * * *">
+        <small>minuto hora dia-do-mês mês dia-da-semana · horário de Brasília · o minuto é ignorado (a coleta é de hora em hora) · aceita 22-5 para virar a meia-noite</small>
+      </label>
+      <div class="plan-info" id="sched-info" role="status" aria-live="polite"></div>
     </div>
     <div class="plan-info" id="plan-info" role="status" aria-live="polite" hidden></div>
     <label class="f check" id="cmp-wrap"><span><input type="checkbox" name="compare_separate"> Comparar com cada trecho comprado separado (só ida)</span>
@@ -154,6 +176,7 @@
   </form>
 </dialog>
 
+<script type="module" src="schedule.js"></script>
 <script src="airports.js" defer></script>
 <script src="app.js" defer></script>
 </body>

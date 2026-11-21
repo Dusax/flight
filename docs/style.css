@@ -419,6 +419,15 @@ label.f.check input { width: auto; min-height: 0; }
 }
 @media (prefers-reduced-motion: reduce) { * { transition: none !important; } }
 
+/* ---------- horários de coleta ---------- */
+.sched { display: grid; gap: 12px; padding: 12px; border: 1px solid var(--line-2); border-radius: 12px; background: var(--surface-2); }
+.sched-presets { display: flex; flex-wrap: wrap; gap: 6px; }
+.sched-days { border: 0; padding: 0; margin: 0; min-width: 0; display: flex; flex-wrap: wrap; gap: 6px 12px; align-items: center; }
+.sched-days legend { font-size: 13px; color: var(--text-2); font-weight: 600; padding: 0; margin-bottom: 6px; float: left; width: 100%; }
+.sched-days label { display: inline-flex; gap: 5px; align-items: center; font-size: 14px; color: var(--text); cursor: pointer; }
+.sched input[name=sched_cron] { font-family: ui-monospace, SFMono-Regular, Menlo, monospace; }
+.sched .plan-info { word-break: break-word; }
+
 /* ---------- voos favoritos ---------- */
 .btn .badge { background: var(--brand); color: var(--on-brand); border-radius: 999px; font-size: 11px; font-weight: 700; padding: 1px 7px; line-height: 1.5; }
 .btn.on { background: var(--brand-soft); border-color: var(--brand); color: var(--brand); }

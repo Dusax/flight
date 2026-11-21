@@ -322,3 +322,14 @@ test("normalizeWatch: consulta pontual (once) nunca é agendada", () => {
   assert.equal(normalizeWatch(watch()).once, false);
   assert.equal(normalizeWatch(watch({ once: false, every_hours: 12 })).every_hours, 12);
 });
+
+test("normalizeWatch: horários em cron (schedule) mandam sobre every_hours e são validados", () => {
+  const w = normalizeWatch(watch({ schedule: "0 22,0,2 * * 1-5", every_hours: 6 }));
+  assert.equal(w.schedule, "0 22,0,2 * * 1-5"); assert.equal(w.every_hours, null);
+  assert.equal(normalizeWatch(watch({ schedule: "  0   22 * * *  " })).schedule, "0 22 * * *");   // espaços normalizados
+  assert.equal(normalizeWatch(watch()).schedule, null); assert.equal(normalizeWatch(watch()).every_hours, 12);   // sem cron: igual a antes
+  assert.equal(normalizeWatch(watch({ schedule: "" , every_hours: 3 })).every_hours, 3);
+  assert.equal(normalizeWatch(watch({ once: true, schedule: "0 22 * * *" })).schedule, null);   // pontual nunca é agendada
+  for (const bad of ["0 25 * * *", "0 * * *", "lixo", "0 22 * * FOO", "x".repeat(101)]) assert.throws(() => normalizeWatch(watch({ schedule: bad })), /horários|hora|campos|inválid|dia/, bad);
+  assert.throws(() => normalizeWatch(watch({ schedule: 5 })), /horários/);
+});

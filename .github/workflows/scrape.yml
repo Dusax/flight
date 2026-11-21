@@ -59,15 +59,31 @@ jobs:
           cache: pip
 
       - name: Instalar
-        run: |
-          pip install -e .
-          python -m playwright install --with-deps chromium
+        run: pip install -e .
 
       - name: Sincronizar buscas cadastradas no painel
         run: python -m flights --db data/cloud.db sync-watches data/watches.json
 
+      # Com horários (cron) por busca, a maioria das rodadas de hora em hora não tem nada a coletar: nesse caso
+      # pula o Chromium e a coleta. Disparo manual (botão do painel ou aba Actions) sempre coleta.
+      - name: Vence alguma busca agora?
+        id: due
+        env:
+          EVENT: ${{ github.event_name }}
+        run: |
+          if [ "$EVENT" != "schedule" ] || python -m flights --db data/cloud.db due; then
+            echo "run=true" >> "$GITHUB_OUTPUT"
+          else
+            echo "run=false" >> "$GITHUB_OUTPUT"
+          fi
+
+      - name: Instalar o Chromium
+        if: steps.due.outputs.run == 'true'
+        run: python -m playwright install --with-deps chromium
+
       - name: Coletar
         id: collect
+        if: steps.due.outputs.run == 'true'
         continue-on-error: true
         env:
           IDS: ${{ inputs.ids }}

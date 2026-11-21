@@ -20,6 +20,15 @@ frequência de cada uma pelo próprio painel e pode disparar uma coleta na hora.
 - **Comparar separado:** além do pacote, consulta cada trecho como só ida e soma os
   mais baratos. O painel diz se o pacote ou o separado compensa, e quanto. Vale para
   ida e volta e multi-destino. Passagens separadas não têm proteção de conexão.
+- **Horários de coleta (cron):** em “Coletar automaticamente” escolha **Horários personalizados…**: janela (ex.: das 22h às
+  6h, aceita virar a meia-noite), repetir a cada N horas dentro dela e dias da semana, com atalhos (noite e madrugada,
+  só madrugada, horário comercial) e um campo **cron avançado** sincronizado (`0 22,0,2,4,6 * * 1-5`; use-o para duas
+  janelas, meses ou dia do mês). A prévia mostra as próximas coletas. Fuso de **Brasília**. A coleta roda de hora em
+  hora (~7 min depois do horário cheio), então a unidade é a hora cheia e o campo de minutos é ignorado. Se o GitHub
+  atrasar ou pular uma rodada, o horário perdido ainda é coletado até 3 horas cheias depois. O cron manda sobre “a cada
+  N horas”; buscas sem cron continuam como antes; consulta pontual nunca é agendada. Quando nada vence, a rodada
+  pula a instalação do Chromium e a coleta (disparo manual sempre coleta). Linha de comando:
+  `flights watch add ... --schedule "0 22,0,2,4,6 * * *"` e `flights due`.
 - **Melhor data:** a de menor preço; em empate de preço, a de voo mais curto (duração do voo mais barato dela); se ainda
   empatar em preço **e** tempo, todas as datas empatadas são listadas como melhores (cartão “Melhores datas: …”, aba
   Datas “Melhor · 7h40”, Resumo “Empata com …”). Datas de mesmo preço e voo mais longo aparecem como “Mesmo preço”.

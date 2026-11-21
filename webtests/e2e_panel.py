@@ -269,6 +269,39 @@ try:
         pg.goto(base + "/#/viagem/2/voos"); pg.wait_for_selector(".gauge-top .range-bar"); assert pg.locator(".gauge-top .range-pin").count() == 1
         print("12e. faixa de preço típica aparece em ida e volta (resumo, voos e cartão), sem depender da tela de compra")
 
+        # ---- horários de coleta (cron, Brasília) ----
+        pg.goto(base + "/#/viagem/3/resumo"); pg.wait_for_selector(".trip-head"); pg.click("[data-act=edit]"); pg.wait_for_selector("#dlg-watch[open]")
+        assert pg.is_hidden("#sched-box")
+        pg.select_option(f + "[name=every_hours]", "custom"); pg.wait_for_selector("#sched-box:not([hidden])")
+        assert pg.input_value(f + "[name=sched_cron]") == "0 0,2,4,6,22 * * *", "abre com o atalho Noite e madrugada"
+        pg.locator("#sched-info").filter(has_text="Próximas coletas").wait_for()
+        # janela 22h -> 6h, de 2 em 2 horas, só seg a sex
+        pg.select_option(f + "[name=sched_from]", "22"); pg.select_option(f + "[name=sched_to]", "6"); pg.select_option(f + "[name=sched_every]", "2")
+        for d in ("0", "6"): pg.uncheck(f + f"[name=sched_day][value='{d}']")
+        assert pg.input_value(f + "[name=sched_cron]") == "0 0,2,4,6,22 * * 1-5"
+        txt = pg.inner_text("#sched-info"); assert txt.count(":00") >= 5 and "Brasília" in txt, txt
+        pg.click("[data-sched-preset=work]"); assert pg.input_value(f + "[name=sched_cron]") == "0 9,12,15,18 * * 1-5"
+        pg.click("[data-sched-preset=dawn]"); assert pg.input_value(f + "[name=sched_cron]") == "0 2-6 * * *"
+        # cron avançado que não cabe no modo simples (duas janelas): desliga os controles simples, mas aceita
+        pg.fill(f + "[name=sched_cron]", "0 6,22 * * *")
+        assert pg.is_disabled(f + "[name=sched_from]") and "Próximas coletas" in pg.inner_text("#sched-info")
+        pg.fill(f + "[name=sched_cron]", "0 25 * * *"); pg.locator("#sched-info.bad").wait_for()
+        pg.uncheck(f + "[name=run_now]"); pg.click("#watch-save")
+        assert "hora" in pg.inner_text("#watch-err") and pg.is_visible("#dlg-watch"), "cron inválido não salva"
+        pg.fill(f + "[name=sched_cron]", "0 22,0,2,4,6 * * 1-5"); pg.locator("#sched-info:not(.bad)").wait_for()
+        assert not pg.is_disabled(f + "[name=sched_from]") and pg.input_value(f + "[name=sched_from]") == "22", "cron simples volta ao formulário"
+        pg.click("#watch-save"); pg.wait_for_selector("#dlg-watch:not([open])", state="attached")
+        w3 = next(w for w in pg.evaluate("fetch('/api/watches').then(r => r.json())")["list"] if w["id"] == 3)
+        assert w3["schedule"] == "0 22,0,2,4,6 * * 1-5" and w3["every_hours"] is None, w3   # guarda o que foi escrito (normalizando espaços)
+        assert "Próxima coleta" in pg.inner_text(".trip-head")
+        pg.click('.tab[data-tab="busca"]'); body = pg.inner_text("#view"); assert "Seg a sex, das 22h às 6h, de 2 em 2 h" in body and "Brasília" in body, body[:400]
+        pg.click("[data-act=edit]"); pg.wait_for_selector("#dlg-watch[open]")
+        assert pg.input_value(f + "[name=every_hours]") == "custom" and pg.is_visible("#sched-box") and pg.input_value(f + "[name=sched_to]") == "6", "editar reabre no modo simples"
+        pg.select_option(f + "[name=every_hours]", "24"); pg.wait_for_selector("#sched-box", state="hidden"); pg.click("#watch-save"); pg.wait_for_selector("#dlg-watch:not([open])", state="attached")
+        w3 = next(w for w in pg.evaluate("fetch('/api/watches').then(r => r.json())")["list"] if w["id"] == 3)
+        assert w3["schedule"] is None and w3["every_hours"] == 24, w3
+        print("12f. horários de coleta: janela, dias, atalhos, cron avançado, erro, persistência e volta para 'a cada N horas'")
+
         pg.goto(base + "/#/viagem/1/voos"); pg.wait_for_selector(".fl"); assert not pg.is_visible("#dlg-login")
         print("13. link direto + sessão mantida após recarregar")
         ctx.clear_cookies(); pg.click('[data-nav="/"]'); pg.click('.tcard [data-act=run]')
