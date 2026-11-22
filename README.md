@@ -36,7 +36,8 @@ frequência de cada uma pelo próprio painel e pode disparar uma coleta na hora.
   compra dos 3 mais baratos): 28–31 s na 1ª leitura de um voo e **4,4 s** nas seguintes (−85 %; 120 voos, 15 detalhes
   e a bagagem copiados adiante); o bloqueio de imagens não mudou o tempo (~8 s numa consulta simples) nem a taxa de erro. Um **disjuntor** protege contra rajadas de
   “something went wrong”: após 4 falhas seguidas espera 2 min (depois 5) e tenta de novo; se continuar, o job para e o
-  que faltou fica para a próxima coleta (não vira erro); a execução emite um aviso amarelo quando mais da metade das
+  que faltou fica para a próxima coleta (não vira erro); depois de uma falha, a consulta seguinte usa uma só tentativa (repetir
+  na hora não adianta durante a rajada; com o Google normal continuam 3); a execução emite um aviso amarelo quando mais da metade das
   consultas falha e o resumo mostra a taxa de falha. `flights run --profile` mostra o tempo médio de
   cada fase. Linha de comando: `flights plan`, `flights run <id> --shard-out`, `flights merge`, `flights summary`.
 - **Voos acompanhados (evolução de um voo):** a aba **Voos acompanhados** de cada viagem mostra o preço de **um voo

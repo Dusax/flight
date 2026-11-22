@@ -265,3 +265,22 @@ def test_aviso_quando_mais_da_metade_falha_e_taxa_no_resumo(tmp_path, monkeypatc
     assert "::warning::Mais da metade" in out
     assert cli.main(["--db", str(base), "summary", "--run-tag", "77"]) == 1
     assert "100 % com falha" in capsys.readouterr().out
+
+
+def test_depois_de_uma_falha_a_consulta_seguinte_usa_uma_so_tentativa(tmp_path, monkeypatch):
+    """Rajada de erros: repetir na hora não adianta; com sucesso volta a 3 tentativas."""
+    from flights.scraper import ScrapeError
+    conn = db.connect(tmp_path / "t.db")
+    spec = SearchSpec("GRU", "LIS", date(2030, 5, 12))
+    wid = db.add_watch(conn, spec)
+    plan = iter([False, True, False, False, True, True])      # falha, ok, falha, falha, ok, ok
+    seen = []
+    class S:
+        def search(self, spec, **kw):
+            seen.append(kw.get("attempts"))
+            if not next(plan):
+                raise ScrapeError("something went wrong")
+            return Flaky(0).search(spec)
+    monkeypatch.setattr(cli.time, "sleep", lambda s: None)
+    cli.run_specs(conn, S(), [(wid, spec.shift(i), 0) for i in range(6)], 3.0, 5)
+    assert seen == [3, 1, 3, 1, 1, 3]       # 1ª normal; após falha 1; após sucesso volta a 3; após duas falhas segue em 1

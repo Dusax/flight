@@ -149,6 +149,7 @@ def run_specs(
             print_profile(scraper, getattr(scraper, "counts", {}).get("goto", 0))
 
 
+RETRY_ATTEMPTS = 3              # tentativas por consulta com o Google respondendo normalmente
 BREAKER_STREAK = 4              # falhas seguidas que abrem o disjuntor
 BREAKER_COOLDOWNS = (120, 300)  # esperas (s) antes de tentar de novo; esgotadas, o job para e deixa o resto para a próxima coleta
 
@@ -175,7 +176,10 @@ def _run_items(conn, scraper, items, top, max_offers, detail, deadline, detail_t
                 known = db.known_details(conn, watch_id, spec)   # o que já se sabe dos voos: detalhe/compra recentes não se repetem
             except Exception:                                    # histórico ilegível não pode impedir a coleta
                 known = {}
-            result = scraper.search(spec, detail_offers=detail, booking_top=booking_top, known=known, detail_ttl_h=detail_ttl)
+            # Com o Google saudável, 3 tentativas. Depois de uma falha na mesma execução (rajada de "something went wrong"),
+            # repetir na hora quase nunca resolve e custa ~25 s: 1 tentativa, e o disjuntor/pausa fazem o resfriamento.
+            result = scraper.search(spec, detail_offers=detail, booking_top=booking_top, known=known, detail_ttl_h=detail_ttl,
+                                    attempts=1 if streak else RETRY_ATTEMPTS)
         except BlockedError as e:
             pacer.error()
             db.save_search(conn, spec, error=str(e), status="blocked", watch_id=watch_id)
