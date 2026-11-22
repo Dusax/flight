@@ -357,7 +357,7 @@ function tripCard(w) {
   if (c) chips.push(levelChip(c.price_level));
   if (!w.active) chips.push(`<span class="chip warn">${icon("pause")}Pausada</span>`);
   if (w.expired) chips.push(`<span class="chip warn">Já passou</span>`);
-  if (failed(w)) chips.push(partial(w) ? `<span class="chip warn">${icon("alert")}${w.last_failed} de ${w.last_total} falharam</span>` : `<span class="chip bad">${icon("alert")}Coleta falhou</span>`);
+  if (failed(w)) chips.push(partial(w) ? `<span class="chip warn" title="${esc(failTitle(w))}. ${esc(failCause(w))}">${icon("alert")}${w.last_failed} de ${w.last_total} falharam</span>` : `<span class="chip bad">${icon("alert")}Coleta falhou</span>`);
   let body;
   if (!c) {
     body = `<div class="tcard-empty">${w.pending ? (w.once ? "Consultando o Google Voos… leva de 1 a 5 minutos; a página atualiza sozinha. Se não chegar, use “Buscar agora”." : "Aguardando a primeira coleta. Use “Buscar agora” para acelerar.") : w.last_status === "empty" ? "O Google não retornou voos para essas datas." : "Ainda sem resultados."}</div>`;
@@ -377,7 +377,7 @@ function tripCard(w) {
     <div class="tcard-top"><div><div class="tcard-name">${esc(w.label || kindLabel(w))}</div><div class="tcard-sub">${esc(cityLine(w))}</div></div><div class="chips">${chips.join("")}</div></div>
     ${routeViz(w)}
     ${body}
-    ${failed(w) ? `<div class="tcard-fail${partial(w) ? " soft" : ""}" title="${esc(failCause(w))}">${icon("alert")}<span><b>${esc(failTitle(w))}.</b> ${esc(failCause(w))}</span></div>` : ""}
+    ${failed(w) && !partial(w) ? `<div class="tcard-fail" title="${esc(failCause(w))}">${icon("alert")}<span><b>${esc(failTitle(w))}.</b> ${esc(failCause(w))}</span></div>` : ""}
     <div class="tcard-foot"><span>${c ? `Coletado ${esc(ago(c.scraped_at))}` : esc(nextText(w))}</span>
       <span class="btns"><button class="btn sm" data-act="run" data-id="${w.id}" ${rw ? "" : "disabled"}>${icon("refresh")}Buscar agora</button></span></div>
   </article>`;

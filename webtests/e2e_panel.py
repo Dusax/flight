@@ -370,6 +370,19 @@ try:
         pg.unroute("**/api/dashboard", many_ties)
         print("12i. chip 'Melhores datas' curto (2 datas + N) e dentro do cartão em 1200/390/320 px")
 
+        # ---- falha parcial não polui o cartão (a causa fica no detalhe e no balão do selo) ----
+        def partial_fail(route):
+            r = route.fetch(); d = r.json()
+            w3 = next(w for w in d["watches"] if w["id"] == 3); w3.update(last_status="error", last_error="O Google Voos respondeu 'something went wrong'.", last_failed=2, last_total=22)
+            w4 = next(w for w in d["watches"] if w["id"] == 4); w4.update(last_status="blocked", last_error="captcha", last_failed=1, last_total=1, combos=[])
+            route.fulfill(response=r, body=_json.dumps(d))
+        pg.route("**/api/dashboard", partial_fail); pg.reload(); pg.wait_for_selector(".tcard")
+        c3 = pg.locator('.tcard[data-open-trip="3"]'); assert c3.locator(".tcard-fail").count() == 0, "parcial: sem caixa de aviso no cartão"
+        assert "2 de 22 falharam" in c3.inner_text() and "página de erro passageira" in c3.locator(".chip.warn").first.get_attribute("title")
+        assert pg.locator('.tcard[data-open-trip="4"] .tcard-fail').count() == 1, "falha total: a causa continua no cartão"
+        pg.unroute("**/api/dashboard", partial_fail)
+        print("12j. cartão: falha parcial só com o selo (causa no balão); falha total mantém a causa")
+
         pg.goto(base + "/#/viagem/1/voos"); pg.wait_for_selector(".fl"); assert not pg.is_visible("#dlg-login")
         print("13. link direto + sessão mantida após recarregar")
         ctx.clear_cookies(); pg.click('[data-nav="/"]'); pg.click('.tcard [data-act=run]')
