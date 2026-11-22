@@ -149,8 +149,16 @@ def run_specs(
             print_profile(scraper, getattr(scraper, "counts", {}).get("goto", 0))
 
 
+BREAKER_STREAK = 4              # falhas seguidas que abrem o disjuntor
+BREAKER_COOLDOWNS = (120, 300)  # esperas (s) antes de tentar de novo; esgotadas, o job para e deixa o resto para a próxima coleta
+
+
 def _run_items(conn, scraper, items, top, max_offers, detail, deadline, detail_ttl, pacer) -> Tuple[int, int]:
+    """Disjuntor: depois de `BREAKER_STREAK` falhas seguidas (o Google devolvendo "something went wrong" em rajada), espera
+    um resfriamento e tenta de novo; se continuar, para as consultas restantes deste job (elas NÃO viram erro: ficam para
+    a próxima coleta), em vez de gastar ~40 s por consulta pressionando o Google."""
     ok = failed = 0
+    streak = cooldowns = 0
     for i, (watch_id, spec, booking_top) in enumerate(items):
         if deadline is not None and time.monotonic() > deadline:
             print(f"\nTempo da execução esgotado: {len(items) - i} consulta(s) ficam para a próxima coleta.")
@@ -180,9 +188,21 @@ def _run_items(conn, scraper, items, top, max_offers, detail, deadline, detail_t
             db.save_search(conn, spec, error=str(e), watch_id=watch_id)  # o texto completo fica só no banco (privado)
             print("erro (detalhe no painel)" if QUIET else f"  ✗ erro: {e}")
             failed += 1
+            streak += 1
+            if streak >= BREAKER_STREAK:
+                rest = len(items) - i - 1
+                wait = BREAKER_COOLDOWNS[cooldowns] if cooldowns < len(BREAKER_COOLDOWNS) else None
+                if wait is None or (deadline is not None and time.monotonic() + wait > deadline):
+                    print(f"\nMuitas falhas seguidas do Google: {rest} consulta(s) ficam para a próxima coleta.")
+                    break
+                cooldowns += 1
+                print(f"\n{streak} falhas seguidas: esperando {wait // 60} min antes de tentar de novo.")
+                time.sleep(wait)
+                streak = BREAKER_STREAK - 1      # mais uma falha reabre o disjuntor; um sucesso zera
             continue
         sid = db.save_search(conn, spec, result, watch_id=watch_id, max_offers=max_offers)
         ok += 1
+        streak = 0
         pacer.ok()
         if QUIET:
             print(f"ok · {len(result.offers)} voos" + (f" · {len(result.warnings)} aviso(s)" if result.warnings else "")
@@ -324,6 +344,9 @@ def _run_collect(args, conn, items, since) -> int:
                                detail_ttl=args.detail_ttl, profile=args.profile or bool(os.environ.get("FLIGHTS_PROFILE")),
                                deadline=time.monotonic() + budget_min * 60 if budget_min else None)
     print(f"\nConcluído: {ok} ok, {failed} com falha.")
+    if ok + failed and failed * 2 > ok + failed:
+        print(f"::warning::Mais da metade das consultas falhou ({failed} de {ok + failed}): o Google pode estar limitando as consultas. "
+              "O que ficou pendente entra na próxima coleta.")
     if ok and failed:
         # O que deu certo já está gravado e aparece no painel; a falha de algumas consultas vira só um aviso
         # (anotação amarela no Actions) e o motivo fica no cartão da viagem. Execução vermelha = nada funcionou.
@@ -426,7 +449,8 @@ def cmd_merge(args) -> int:
 def cmd_summary(args) -> int:
     conn = db.connect(args.db)
     s = db.run_summary(conn, args.run_tag) if args.run_tag else {"total": 0, "ok": 0, "error": 0, "blocked": 0, "empty": 0}
-    print(f"Execução: {s['total']} consulta(s) · {s['ok']} ok · {s['empty']} sem voos · {s['error']} com erro · {s['blocked']} com captcha")
+    rate = f" · {round(100 * (s['error'] + s['blocked']) / s['total'])} % com falha" if s["total"] else ""
+    print(f"Execução: {s['total']} consulta(s) · {s['ok']} ok · {s['empty']} sem voos · {s['error']} com erro · {s['blocked']} com captcha{rate}")
     if s["total"] == 0:
         return 1 if args.expect_any else 0
     return 0 if s["ok"] or s["empty"] else 1

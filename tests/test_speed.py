@@ -179,3 +179,89 @@ def test_print_profile_mostra_percentuais(capsys):
     out = capsys.readouterr().out
     assert "compra" in out and "10.0 s por consulta" in out and "83 %" in out
     cli.print_profile(object(), 3)       # sem métricas: nada
+
+
+# ---------- disjuntor contra rajada de erros ----------
+class Flaky:
+    """Falha nas `fail_first` primeiras consultas e depois responde bem."""
+    def __init__(self, fail_first):
+        self.n = 0
+        self.fail_first = fail_first
+    def __enter__(self): return self
+    def __exit__(self, *a): pass
+    def search(self, spec, **kw):
+        from flights.scraper import ScrapeError
+        self.n += 1
+        if self.n <= self.fail_first:
+            raise ScrapeError("O Google Voos respondeu 'something went wrong'.")
+        return ScrapeResult([Offer(price=1000, currency="BRL", airline="X", operated_by=None, origin="GRU", destination="LIS", dep_time="2030-05-12T10:00",
+                                   arr_time="2030-05-12T20:00", duration_min=600, stops=0, flight_numbers="XX 1", layover_airports=None, layovers=[],
+                                   section="Top", position=1)], "https://www.google.com/x", "typical")
+
+
+def run_flaky(tmp_path, monkeypatch, fail_first, n_items=12, deadline=None):
+    conn = db.connect(tmp_path / "f.db")
+    spec = SearchSpec("GRU", "LIS", date(2030, 5, 12))
+    wid = db.add_watch(conn, spec)
+    items = [(wid, spec.shift(i), 0) for i in range(n_items)]
+    sleeps = []
+    monkeypatch.setattr(cli.time, "sleep", lambda s: sleeps.append(s))
+    scraper = Flaky(fail_first)
+    result = cli.run_specs(conn, scraper, items, 3.0, 5, deadline=deadline)
+    return result, scraper, sleeps, conn
+
+
+def test_disjuntor_espera_e_retoma_quando_o_google_volta(tmp_path, monkeypatch, capsys):
+    (ok, failed), scraper, sleeps, conn = run_flaky(tmp_path, monkeypatch, fail_first=4)
+    assert (ok, failed) == (8, 4) and scraper.n == 12                    # todas as 12 rodaram
+    assert 120 in sleeps and 300 not in sleeps                             # 1 resfriamento de 2 min (após 4 falhas seguidas)
+    assert "esperando 2 min" in capsys.readouterr().out
+
+
+def test_disjuntor_para_o_job_e_nao_conta_as_nao_executadas_como_erro(tmp_path, monkeypatch, capsys):
+    (ok, failed), scraper, sleeps, conn = run_flaky(tmp_path, monkeypatch, fail_first=99)
+    assert ok == 0 and failed == scraper.n and scraper.n < 12              # parou antes do fim
+    assert [s for s in sleeps if s >= 120] == [120, 300]                   # 2 resfriamentos e depois desiste
+    assert conn.execute("SELECT COUNT(*) FROM searches").fetchone()[0] == scraper.n   # as não executadas não viram linhas de erro
+    assert "ficam para a próxima coleta" in capsys.readouterr().out
+
+
+def test_sucesso_zera_a_sequencia_de_falhas(tmp_path, monkeypatch):
+    conn = db.connect(tmp_path / "z.db")
+    spec = SearchSpec("GRU", "LIS", date(2030, 5, 12))
+    wid = db.add_watch(conn, spec)
+    from flights.scraper import ScrapeError
+    seq = iter([False, False, False, True, False, False, False, True, True])   # nunca 4 falhas seguidas
+    class S:
+        def search(self, spec, **kw):
+            if not next(seq):
+                raise ScrapeError("something went wrong")
+            return Flaky(0).search(spec)
+    sleeps = []
+    monkeypatch.setattr(cli.time, "sleep", lambda s: sleeps.append(s))
+    ok, failed = cli.run_specs(conn, S(), [(wid, spec.shift(i), 0) for i in range(9)], 3.0, 5)
+    assert (ok, failed) == (3, 6) and not [s for s in sleeps if s >= 120]
+
+
+def test_disjuntor_respeita_o_orcamento_de_tempo(tmp_path, monkeypatch, capsys):
+    deadline = cli.time.monotonic() + 60        # menos que o resfriamento de 2 min: não espera, para
+    (ok, failed), scraper, sleeps, conn = run_flaky(tmp_path, monkeypatch, fail_first=99, deadline=deadline)
+    assert scraper.n == 4 and not [s for s in sleeps if s >= 120]
+    assert "ficam para a próxima coleta" in capsys.readouterr().out
+
+
+def test_aviso_quando_mais_da_metade_falha_e_taxa_no_resumo(tmp_path, monkeypatch, capsys):
+    base = tmp_path / "w.db"
+    conn = db.connect(base)
+    spec = SearchSpec("GRU", "LIS", date.today() + timedelta(days=40))
+    db.add_watch(conn, spec, every_hours=6)
+    conn.close()
+    monkeypatch.setattr(cli, "make_scraper", lambda a: Flaky(2))
+    monkeypatch.setattr(cli.time, "sleep", lambda s: None)
+    monkeypatch.setenv("FLIGHTS_RUN_ID", "77")
+    assert cli.main(["--db", str(base), "--quiet", "run", "1"]) == 1          # 1 consulta só: falhou, nada deu certo
+    cli.QUIET = False
+    out = capsys.readouterr().out
+    assert "::warning::Mais da metade" in out
+    assert cli.main(["--db", str(base), "summary", "--run-tag", "77"]) == 1
+    assert "100 % com falha" in capsys.readouterr().out

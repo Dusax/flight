@@ -32,7 +32,12 @@ frequência de cada uma pelo próprio painel e pode disparar uma coleta na hora.
   depois de 24 h** (`--detail-ttl`; o preço e os horários vêm sempre da página; bagagem, aeronave e faixa típica são
   copiados adiante, e os preços dos vendedores nunca — a tela de compra mostra “conferida há Xh”), imagens/mídia/fontes
   não são baixadas (`FLIGHTS_NO_BLOCK=1` desliga), as esperas fixas viraram esperas por condição e a pausa entre
-  consultas (`--delay`, padrão 3 s) dobra após um erro e volta sozinha. `flights run --profile` mostra o tempo médio de
+  consultas (`--delay`, padrão 3 s) dobra após um erro e volta sozinha. **Medido ao vivo** (só ida, `--detail 15`,
+  compra dos 3 mais baratos): 28–31 s na 1ª leitura de um voo e **4,4 s** nas seguintes (−85 %; 120 voos, 15 detalhes
+  e a bagagem copiados adiante); o bloqueio de imagens não mudou o tempo (~8 s numa consulta simples) nem a taxa de erro. Um **disjuntor** protege contra rajadas de
+  “something went wrong”: após 4 falhas seguidas espera 2 min (depois 5) e tenta de novo; se continuar, o job para e o
+  que faltou fica para a próxima coleta (não vira erro); a execução emite um aviso amarelo quando mais da metade das
+  consultas falha e o resumo mostra a taxa de falha. `flights run --profile` mostra o tempo médio de
   cada fase. Linha de comando: `flights plan`, `flights run <id> --shard-out`, `flights merge`, `flights summary`.
 - **Voos acompanhados (evolução de um voo):** a aba **Voos acompanhados** de cada viagem mostra o preço de **um voo
   específico** a cada coleta. Escolha a data e o voo pelo número, companhia ou horário (campo de busca: “LA 8084”);
