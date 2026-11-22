@@ -135,7 +135,8 @@ const cmpCombo = (a, b) => a.min_price - b.min_price || comboDur(a) - comboDur(b
 function bestCombo(w) { return w.combos.reduce((b, c) => (!b || cmpCombo(c, b) < 0 ? c : b), null); }
 /* todas as datas empatadas na melhor posição (mesmo preço E mesmo tempo de voo), da mais cedo para a mais tarde */
 function bestCombos(w) { const b = bestCombo(w); return b ? w.combos.filter((c) => cmpCombo(c, b) === 0).sort((x, y) => x.depart_date.localeCompare(y.depart_date) || (x.end_date || "").localeCompare(y.end_date || "")) : []; }
-const joinDates = (list, max = 3) => `${list.slice(0, max).map(dateSpan).join(" · ")}${list.length > max ? ` +${list.length - max}` : ""}`;
+const dateSpanShort = (c) => dateSpan(c).replace(/ de /g, " ");   // "10 de mar → 22 de mar" -> "10 mar → 22 mar" (cabe melhor em cartão)
+const joinDates = (list, max = 3, fmt = dateSpan) => `${list.slice(0, max).map(fmt).join(" · ")}${list.length > max ? ` +${list.length - max}` : ""}`;
 function comboIndex(w) {
   const i = state.sel[w.id];
   if (i != null && w.combos[i]) return i;
@@ -229,7 +230,7 @@ function metaChips(w) {
   const out = [...(w.once ? [`<span class="chip warn">${icon("bolt")}Pontual</span>`] : []), `<span class="chip brand">${esc(kindLabel(w))}</span>`, `<span class="chip">${icon("cal")}${esc(dateChipText(w))}</span>`];
   if (w.flex_days) out.push(`<span class="chip">± ${w.flex_days} dia${w.flex_days > 1 ? "s" : ""}</span>`);
   if (hasRange(w)) out.push(`<span class="chip">${icon("cal")}Período de datas</span>`);
-  if (w.coverage && w.coverage.seen < w.coverage.space) out.push(`<span class="chip" title="Cada coleta consulta até ${w.budget} combinações; as demais entram nas próximas.">Vistas ${w.coverage.seen} de ${w.coverage.space} datas</span>`);
+  if (w.coverage && w.coverage.seen < w.coverage.space) out.push(`<span class="chip wrap" title="Cada coleta consulta até ${w.budget} combinações; as demais entram nas próximas.">Vistas ${w.coverage.seen} de ${w.coverage.space} datas</span>`);
   out.push(`<span class="chip">${icon("user")}${w.adults} adulto${w.adults > 1 ? "s" : ""}</span>`, `<span class="chip">${esc(CABINS[w.cabin] || w.cabin)}</span>`);
   if (w.max_stops != null) out.push(`<span class="chip">${w.max_stops === 0 ? "Só direto" : `Até ${w.max_stops} escala${w.max_stops > 1 ? "s" : ""}`}</span>`);
   return out.join("");
@@ -364,7 +365,7 @@ function tripCard(w) {
     body = `<div class="price-row"><div><div class="price-k">${esc(totalLabel(w))}</div><div class="price num${bigCls(money(c.min_price, w.currency))}">${money(c.min_price, w.currency)}</div>
         <div class="price-d">${deltaHtml(c.min_price, c.prev_price, w.currency, "vs. anterior")}</div></div>${spark(c.history)}</div>
       ${typicalOf(c) ? `<div class="muted small tcard-typ" title="Faixa em que costumam ficar os voos mais baratos desta rota, segundo o Google">Faixa típica ${money(typicalOf(c).typical_low, w.currency)} a ${money(typicalOf(c).typical_high, w.currency)}</div>` : ""}
-      <div class="chips">${w.combos.length > 1 ? (() => { const bs = bestCombos(w); return `<span class="chip good">${icon("cal")}${bs.length > 1 ? "Melhores datas" : "Melhor data"}: ${esc(joinDates(bs))}</span>`; })() : ""}${metaChips(w)}</div>
+      <div class="chips">${w.combos.length > 1 ? (() => { const bs = bestCombos(w); return `<span class="chip good wrap" title="${esc(bs.length > 1 ? `Melhores datas: ${joinDates(bs, 12)}` : "")}">${icon("cal")}${bs.length > 1 ? "Melhores datas" : "Melhor data"}: ${esc(joinDates(bs, 2, dateSpanShort))}</span>`; })() : ""}${metaChips(w)}</div>
       <div class="facts">
         <div><div class="fact-k">${icon("clock")}Mais rápida</div><div class="fact-v num">${hm(c.fastest_min)}</div></div>
         <div><div class="fact-k">${icon("plane")}Direto</div><div class="fact-v num">${c.min_nonstop == null ? "—" : money(c.min_nonstop, w.currency)}</div></div>
@@ -463,7 +464,7 @@ function paneResumo(w, c) {
     <section class="panel best">
       <div class="best-top"><div><div class="price-k">${esc(totalLabel(w))}${w.combos.length > 1 ? ` · ${esc(dateSpan(c))}` : ""}</div>
         <div class="price lg num${bigCls(money(c.min_price, w.currency))}">${money(c.min_price, w.currency)}</div><div class="price-d">${deltaHtml(c.min_price, c.prev_price, w.currency)} ${per}</div></div>
-        <div class="chips">${levelChip(c.price_level)}${(() => { const bs = bestCombos(w); return bs.length > 1 && bs.includes(c) ? `<span class="chip good" title="Mesmo preço e mesmo tempo de voo">${icon("cal")}Empata com ${esc(joinDates(bs.filter((x) => x !== c)))}</span>` : ""; })()}</div></div>
+        <div class="chips">${levelChip(c.price_level)}${(() => { const bs = bestCombos(w); return bs.length > 1 && bs.includes(c) ? `<span class="chip good wrap" title="Mesmo preço e mesmo tempo de voo">${icon("cal")}Empata com ${esc(joinDates(bs.filter((x) => x !== c), 2, dateSpanShort))}</span>` : ""; })()}</div></div>
       ${best ? `${itinHtml(best)}
         <div class="fl-air">${avatar(best.airline)}<div><b>${esc(best.airline)}</b><span class="muted small">${esc(best.flight_numbers || "")}${best.operated_by && best.operated_by !== best.airline ? ` · operado por ${esc(best.operated_by)}` : ""}</span></div></div>` : ""}
       ${rangeHtml(c.min_price, typ, w.currency)}

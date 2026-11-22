@@ -348,6 +348,28 @@ try:
         pg.locator(".fl .star").first.click(); pg.wait_for_selector(".trk-chip", state="detached")   # remove o favorito de teste
         print("12h. voos acompanhados: seleção por número, indicadores, gráfico com lacuna, tabela, outras datas, favoritos")
 
+        # ---- chip "Melhores datas" não ultrapassa o cartão (ida e volta com vários empates) ----
+        import copy as _copy
+        def many_ties(route):
+            r = route.fetch(); d = r.json(); w2 = next(w for w in d["watches"] if w["id"] == 2); base_c = w2["combos"][0]; w2["combos"] = []
+            for i in range(8):
+                c = _copy.deepcopy(base_c); dep = f"2027-03-{10 + i // 3:02d}"; ret = f"2027-03-{22 + i % 3:02d}"
+                c.update(depart_date=dep, return_date=ret, end_date=ret)
+                c["legs"] = [dict(c["legs"][0], date=dep), dict(c["legs"][1], date=ret)] if c.get("legs") else c.get("legs")
+                w2["combos"].append(c)
+            route.fulfill(response=r, body=_json.dumps(d))
+        pg.route("**/api/dashboard", many_ties); pg.goto(base + "/#/"); pg.reload(); pg.wait_for_selector('.tcard[data-open-trip="2"]')
+        for width in (1200, 390, 320):
+            pg.set_viewport_size({"width": width, "height": 900}); pg.wait_for_timeout(150)
+            chip = pg.locator('.tcard[data-open-trip="2"] .chip.good.wrap').first
+            txt = chip.inner_text(); assert "Melhores datas:" in txt and "+6" in txt and txt.count("→") == 2, txt      # 2 datas + "+6"
+            assert len(chip.get_attribute("title")) > len(txt), "o título guarda a lista completa"
+            cb, kb = chip.bounding_box(), pg.locator('.tcard[data-open-trip="2"]').bounding_box()
+            assert cb["x"] >= kb["x"] - 1 and cb["x"] + cb["width"] <= kb["x"] + kb["width"] + 1, (width, cb, kb)
+        pg.set_viewport_size({"width": 1200, "height": 900})
+        pg.unroute("**/api/dashboard", many_ties)
+        print("12i. chip 'Melhores datas' curto (2 datas + N) e dentro do cartão em 1200/390/320 px")
+
         pg.goto(base + "/#/viagem/1/voos"); pg.wait_for_selector(".fl"); assert not pg.is_visible("#dlg-login")
         print("13. link direto + sessão mantida após recarregar")
         ctx.clear_cookies(); pg.click('[data-nav="/"]'); pg.click('.tcard [data-act=run]')
