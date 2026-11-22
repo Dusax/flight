@@ -302,6 +302,22 @@ try:
         assert w3["schedule"] is None and w3["every_hours"] == 24, w3
         print("12f. horários de coleta: janela, dias, atalhos, cron avançado, erro, persistência e volta para 'a cada N horas'")
 
+        # ---- versão do painel: rodapé e aviso de nova versão ----
+        pg.goto(base + "/#/"); pg.wait_for_selector(".tcard")
+        assert pg.is_visible("#ver") and "Versão" in pg.inner_text("#ver") and pg.locator(".banner:has-text('nova versão')").count() == 0
+        import json as _json
+        def fake_new_build(route):
+            r = route.fetch(); body = r.json(); body["build"] = "dpl_NOVO"; body["version"] = "abc1234"
+            route.fulfill(response=r, body=_json.dumps(body))
+        pg.route("**/api/me", fake_new_build)
+        pg.evaluate("document.dispatchEvent(new Event('visibilitychange'))")
+        pg.wait_for_selector(".banner:has-text('Há uma nova versão do painel')")
+        assert pg.locator("[data-act=reload]").count() == 1
+        pg.unroute("**/api/me", fake_new_build)
+        pg.click("[data-act=reload]"); pg.wait_for_selector(".tcard"); pg.wait_for_timeout(300)
+        assert pg.locator(".banner:has-text('nova versão')").count() == 0, "depois de recarregar o aviso some"
+        print("12g. versão do painel: rodapé e aviso 'Há uma nova versão' com botão Recarregar")
+
         pg.goto(base + "/#/viagem/1/voos"); pg.wait_for_selector(".fl"); assert not pg.is_visible("#dlg-login")
         print("13. link direto + sessão mantida após recarregar")
         ctx.clear_cookies(); pg.click('[data-nav="/"]'); pg.click('.tcard [data-act=run]')

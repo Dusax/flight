@@ -419,6 +419,11 @@ label.f.check input { width: auto; min-height: 0; }
 }
 @media (prefers-reduced-motion: reduce) { * { transition: none !important; } }
 
+/* ---------- versão do painel ---------- */
+.ver { max-width: 1180px; margin: 28px auto 24px; padding: 0 16px; text-align: center; font-size: 12px; color: var(--text-3); }
+.ver code { font-family: ui-monospace, SFMono-Regular, Menlo, monospace; }
+.banner .btn { margin-left: auto; flex: none; }
+
 /* ---------- horários de coleta ---------- */
 .sched { display: grid; gap: 12px; padding: 12px; border: 1px solid var(--line-2); border-radius: 12px; background: var(--surface-2); }
 .sched-presets { display: flex; flex-wrap: wrap; gap: 6px; }

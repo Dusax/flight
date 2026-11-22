@@ -45,6 +45,8 @@ const state = {
   favsLoaded: false,
   favSort: "recent",
   lastRemoved: null,      // último favorito removido (para "Desfazer")
+  build: null,            // id do deploy em que esta aba carregou (muda a cada deploy)
+  stale: false,           // a Vercel já publicou uma versão mais nova que a desta aba?
   sel: {},                // combinação de datas selecionada por busca
   datesAll: {},           // por busca: mostrar todas as datas na aba Datas (padrão: as mais baratas)
   open: new Set(),        // cards com a tabela de voos aberta
@@ -309,6 +311,7 @@ function renderBanners() {
     b.push(`<div class="banner err">${icon("alert")}<div><b>Servidor não configurado.</b> ${miss}. Defina as variáveis de ambiente na Vercel e faça um novo deploy (veja o README).</div></div>`);
   } else if (!canWrite()) b.push(`<div class="banner">${icon("lock")}<div><b>Você não está logado.</b> <a href="#" data-open="login">Entrar</a> para ver os preços e cadastrar viagens.</div></div>`);
   if (state.loadError) b.push(`<div class="banner err">${icon("alert")}<div><b>Não consegui ler os dados.</b> ${esc(state.loadError)}</div></div>`);
+  if (state.stale) b.push(`<div class="banner">${icon("refresh")}<div><b>Há uma nova versão do painel.</b><div class="muted small">Recarregue para ver as novidades.</div></div><button class="btn sm primary" data-act="reload">Recarregar</button></div>`);
   const run = state.run;
   if (run) {
     const live = run.status !== "completed", ok = run.conclusion === "success";
@@ -812,6 +815,7 @@ document.addEventListener("click", (e) => {
   if (t.dataset.more) { fltState({ id: +t.dataset.more }).limit += 12; return render(); }
   if (t.dataset.openTrip) return go(`/viagem/${t.dataset.openTrip}/resumo`);
   const act = t.dataset.act, id = +t.dataset.id;
+  if (act === "reload") return location.reload();
   if (act === "new") return openWatchDialog(null);
   if (act === "once") return openWatchDialog(null, "once");
   if (act === "promote") return openWatchDialog(state.watches.find((w) => w.id === id), "promote");
@@ -1177,6 +1181,8 @@ function openLogin(msg) {
 }
 async function afterLogin() {
   state.me = await api("/api/me"); state.authed = true; state.loadError = null;
+  state.build = state.me.build; state.stale = false;
+  $("#ver").hidden = !state.me.version; $("#ver").innerHTML = state.me.version ? `Versão <code>${esc(state.me.version)}</code>` : "";
   await load(); await loadRun(); render();
   if (state.run && state.run.status !== "completed") startPolling();
 }
@@ -1204,6 +1210,17 @@ async function load() {
   if (canWrite() && !state.watchesLoaded) { try { await reloadWatches(); } catch (e) { if (e.status !== 401) toast(`Não consegui ler as buscas cadastradas: ${esc(e.message)}`, 8000); } }
   render();
 }
+/* Nova versão publicada? Compara o deploy desta aba com o atual (a cada 5 min e ao voltar para a aba). */
+async function checkVersion() {
+  if (!state.authed || !state.build || state.stale) return;
+  try {
+    const me = await api("/api/me");
+    if (me.build && me.build !== state.build) { state.stale = true; render(); }
+  } catch { /* sem rede ou sessão expirada: tratado nas demais chamadas */ }
+}
+setInterval(() => { if (!document.hidden) checkVersion(); }, 5 * 60 * 1000);
+document.addEventListener("visibilitychange", () => { if (!document.hidden) checkVersion(); });
+
 (async function init() {
   state.view = parseHash();
   Airports.load().then(() => render());   // a lista completa de aeroportos (cidades por extenso em qualquer viagem)

@@ -20,6 +20,11 @@ frequência de cada uma pelo próprio painel e pode disparar uma coleta na hora.
 - **Comparar separado:** além do pacote, consulta cada trecho como só ida e soma os
   mais baratos. O painel diz se o pacote ou o separado compensa, e quanto. Vale para
   ida e volta e multi-destino. Passagens separadas não têm proteção de conexão.
+- **Versão do painel:** o rodapé mostra a versão (commit) em que a aba está rodando; a cada 5 minutos e quando você volta
+  para a aba, o painel confere se a Vercel publicou algo novo e mostra “Há uma nova versão do painel” com o botão
+  **Recarregar**. Se uma funcionalidade nova não aparece: confira a versão no rodapé com o último commit da branch,
+  recarregue com Ctrl+F5 e, se a versão continuar antiga, veja em Vercel → Deployments se o último commit está
+  “Ready” e se o *Production Branch* é a branch que você usa.
 - **Horários de coleta (cron):** em “Coletar automaticamente” escolha **Horários personalizados…**: janela (ex.: das 22h às
   6h, aceita virar a meia-noite), repetir a cada N horas dentro dela e dias da semana, com atalhos (noite e madrugada,
   só madrugada, horário comercial) e um campo **cron avançado** sincronizado (`0 22,0,2,4,6 * * 1-5`; use-o para duas

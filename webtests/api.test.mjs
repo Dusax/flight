@@ -100,7 +100,18 @@ test("logout limpa o cookie", async () => {
 });
 test("/api/me devolve os repositórios (nunca o token)", async () => {
   const r = await call("/api/me", { cookie: await login() });
-  assert.deepEqual(r.json, { ok: true, codeRepo: "Dusax/flight", dataRepo: "Dusax/flight-data" });
+  assert.deepEqual(r.json, { ok: true, codeRepo: "Dusax/flight", dataRepo: "Dusax/flight-data", version: "dev", build: "dev" });   // fora da Vercel
+});
+test("/api/me informa a versão (commit curto) e o deploy atual", async () => {
+  const old = { sha: process.env.VERCEL_GIT_COMMIT_SHA, dep: process.env.VERCEL_DEPLOYMENT_ID };
+  process.env.VERCEL_GIT_COMMIT_SHA = "ac2e75e3d7d0ebd2156a4670bd7b6917764ede10"; process.env.VERCEL_DEPLOYMENT_ID = "dpl_ABC123";
+  try {
+    const r = await call("/api/me", { cookie: await login() });
+    assert.equal(r.json.version, "ac2e75e"); assert.equal(r.json.build, "dpl_ABC123");
+    assert.ok(!JSON.stringify(r.json).includes(GH_TOKEN));
+  } finally {
+    for (const [k, v] of [["VERCEL_GIT_COMMIT_SHA", old.sha], ["VERCEL_DEPLOYMENT_ID", old.dep]]) v === undefined ? delete process.env[k] : (process.env[k] = v);
+  }
 });
 
 // ---------- toda rota de dados exige login ----------
