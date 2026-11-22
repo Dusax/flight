@@ -344,3 +344,25 @@ test("normalizeWatch: horários em cron (schedule) mandam sobre every_hours e s�
   for (const bad of ["0 25 * * *", "0 * * *", "lixo", "0 22 * * FOO", "x".repeat(101)]) assert.throws(() => normalizeWatch(watch({ schedule: bad })), /horários|hora|campos|inválid|dia/, bad);
   assert.throws(() => normalizeWatch(watch({ schedule: 5 })), /horários/);
 });
+
+test("dispatch: acumula os ids em requests.json (duas coletas seguidas não se perdem)", async () => {
+  const cookie = await login();
+  assert.equal((await call("/api/dispatch", { method: "POST", body: { ids: [3] }, cookie })).json.queued, true);
+  assert.equal((await call("/api/dispatch", { method: "POST", body: { ids: [1, 3, 2] }, cookie })).json.queued, true);
+  assert.deepEqual(JSON.parse(gh.files.get("requests.json").content), { ids: [1, 2, 3], all: false });   // união, sem repetir, ordenada
+  assert.equal(gh.dispatches.length, 2);                                                                      // continua disparando o workflow
+  // sem ids = "todas": liga a flag e preserva os ids já pedidos
+  await call("/api/dispatch", { method: "POST", body: { ids: [] }, cookie });
+  assert.deepEqual(JSON.parse(gh.files.get("requests.json").content), { ids: [1, 2, 3], all: true });
+});
+
+test("dispatch: arquivo de pedidos ilegível ou com lixo não quebra; só o repositório de dados é tocado", async () => {
+  const cookie = await login();
+  gh.putFile("requests.json", "{quebrado");
+  assert.equal((await call("/api/dispatch", { method: "POST", body: { ids: [7] }, cookie })).json.queued, true);
+  assert.deepEqual(JSON.parse(gh.files.get("requests.json").content), { ids: [7], all: false });
+  gh.putFile("requests.json", JSON.stringify({ ids: [5, "x", -1, 2.5, 6], all: "sim" }));
+  await call("/api/dispatch", { method: "POST", body: { ids: [9] }, cookie });
+  assert.deepEqual(JSON.parse(gh.files.get("requests.json").content), { ids: [5, 6, 9], all: false });   // só inteiros válidos; all só se for true
+  assert.ok(gh.calls.filter((c) => c.path.includes("requests.json")).every((c) => c.path.toLowerCase().startsWith("/repos/dusax/flight-data")));
+});

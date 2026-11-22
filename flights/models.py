@@ -283,6 +283,9 @@ class Offer:
     segments: List[dict] = field(default_factory=list)
     # --- tela de compra (só nos voos mais baratos de buscas só de ida) ---
     booking: Optional[Dict] = None
+    # --- quando o detalhe / a tela de compra foram lidos de verdade (None = nunca; copiados adiante ao reaproveitar) ---
+    detail_at: Optional[str] = None
+    booking_at: Optional[str] = None
 
     def key(self) -> tuple:
         return (self.flight_numbers, self.dep_time, self.airline, self.price)

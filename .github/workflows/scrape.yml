@@ -2,10 +2,16 @@ name: Coletar preços
 
 # O código fica neste repositório (público, Actions grátis). Os dados (suas buscas, preços e histórico)
 # ficam num repositório PRIVADO à parte, por padrão "<este-repo>-data", acessado com o segredo
-# DATA_REPO_TOKEN. Os logs daqui são públicos: o scraper roda em modo silencioso (FLIGHTS_QUIET).
+# DATA_REPO_TOKEN. Os logs daqui são públicos: o scraper roda em modo silencioso (FLIGHTS_QUIET) e NUNCA se usa
+# artefato do Actions para passar dados entre os jobs (artefatos de repositório público são baixáveis por qualquer um):
+# cada job de coleta envia o seu "shard" para o repositório privado, e o job final junta tudo.
 #
-# Roda de hora em hora e coleta só as buscas cuja frequência (every_hours) já venceu.
-# Também pode ser disparado na hora, pelo botão "Buscar agora" do painel ou pela aba Actions.
+# Três etapas:
+#   plan     decide que buscas coletar (vencidas no horário, pedidas no painel ou todas) e monta a matriz;
+#   collect  um job por busca, em paralelo (até 3 ao mesmo tempo), cada um com o seu navegador;
+#   publish  junta os shards no banco, gera o dashboard.json e grava no repositório de dados.
+#
+# Roda de hora em hora. Também pode ser disparado na hora, pelo botão "Buscar agora" do painel ou pela aba Actions.
 on:
   schedule:
     - cron: "7 * * * *"
@@ -20,19 +26,24 @@ permissions:
   contents: read
   actions: write # só para o último passo (manter o agendamento ativo)
 
-# Uma coleta por vez: evita duas execuções gravando o banco ao mesmo tempo.
+# Uma execução por vez: evita duas execuções gravando o banco ao mesmo tempo. (O GitHub guarda só UMA execução
+# pendente; os ids pedidos pelo painel ficam acumulados em requests.json, que o job `plan` lê e esvazia.)
 concurrency:
   group: scrape
   cancel-in-progress: false
 
+env:
+  DATA_REPO: ${{ vars.DATA_REPO || format('{0}-data', github.repository) }}
+  FLIGHTS_QUIET: "1"
+  FLIGHTS_RUN_ID: ${{ github.run_id }}
+
 jobs:
-  scrape:
+  plan:
     runs-on: ubuntu-latest
-    timeout-minutes: 45
-    env:
-      DATA_REPO: ${{ vars.DATA_REPO || format('{0}-data', github.repository) }}
-      FLIGHTS_QUIET: "1"
-      FLIGHTS_TIME_BUDGET: "38"   # min: depois disso não começa consulta nova; o que faltar fica para a próxima coleta (o job tem 45)
+    timeout-minutes: 10
+    outputs:
+      any: ${{ steps.plan.outputs.any }}
+      matrix: ${{ steps.plan.outputs.matrix }}
     steps:
       - name: Conferir o segredo do repositório de dados
         env:
@@ -61,54 +72,160 @@ jobs:
       - name: Instalar
         run: pip install -e .
 
-      - name: Sincronizar buscas cadastradas no painel
-        run: python -m flights --db data/cloud.db sync-watches data/watches.json
-
-      # Com horários (cron) por busca, a maioria das rodadas de hora em hora não tem nada a coletar: nesse caso
-      # pula o Chromium e a coleta. Disparo manual (botão do painel ou aba Actions) sempre coleta.
-      - name: Vence alguma busca agora?
-        id: due
+      # Trabalha numa cópia do banco, para a árvore do repositório de dados continuar limpa (o pull --rebase exige isso).
+      - name: Decidir o que coletar
+        id: plan
         env:
           EVENT: ${{ github.event_name }}
-        run: |
-          if [ "$EVENT" != "schedule" ] || python -m flights --db data/cloud.db due; then
-            echo "run=true" >> "$GITHUB_OUTPUT"
-          else
-            echo "run=false" >> "$GITHUB_OUTPUT"
-          fi
-
-      - name: Instalar o Chromium
-        if: steps.due.outputs.run == 'true'
-        run: python -m playwright install --with-deps chromium
-
-      - name: Coletar
-        id: collect
-        if: steps.due.outputs.run == 'true'
-        continue-on-error: true
-        env:
           IDS: ${{ inputs.ids }}
-          EVENT: ${{ github.event_name }}
         run: |
           set -eu
-          IDS="$(echo "${IDS:-}" | tr ',' ' ' | xargs)"
-          case "$IDS" in *[!0-9\ ]*) echo "ids inválidos"; exit 1;; esac
-          if [ "$EVENT" = "schedule" ]; then
-            python -m flights --db data/cloud.db run --due --max-offers 30 --detail 15
-          else
-            # disparo manual: ignora a frequência e roda agora (todas ou só as ids informadas)
-            python -m flights --db data/cloud.db run --max-offers 30 --detail 15 $IDS
-          fi
+          IDS="$(echo "${IDS:-}" | tr ',' ' ' | xargs | tr ' ' ',')"
+          case "$IDS" in *[!0-9,]*) echo "ids inválidos"; exit 1;; esac
+          cp data/cloud.db plan.db 2>/dev/null || true
+          python -m flights --db plan.db sync-watches data/watches.json
+          if [ "$EVENT" = "schedule" ]; then KIND=schedule; else KIND=dispatch; fi
+          python -m flights --db plan.db plan --event "$KIND" --ids "$IDS" --requests data/requests.json
 
-      - name: Gerar dados do painel
-        if: always()
-        run: python -m flights --db data/cloud.db publish --out data
-
-      - name: Salvar resultados no repositório de dados
-        if: always()
+      - name: Dar baixa nos pedidos atendidos (requests.json)
         working-directory: data
         run: |
           git config user.name "flights-bot"
           git config user.email "flights-bot@users.noreply.github.com"
+          git add requests.json 2>/dev/null || true
+          if git diff --cached --quiet; then echo "Nenhum pedido pendente."; exit 0; fi
+          git commit -q -m "pedidos de coleta atendidos"
+          BRANCH="$(git rev-parse --abbrev-ref HEAD)"
+          for i in 1 2 3 4; do
+            git pull -q --rebase -X theirs origin "$BRANCH" && git push -q origin "HEAD:$BRANCH" && exit 0
+            sleep $((i * 3))
+          done
+          exit 1
+
+  collect:
+    needs: plan
+    if: needs.plan.outputs.any == 'true'
+    runs-on: ubuntu-latest
+    timeout-minutes: 45
+    strategy:
+      fail-fast: false
+      max-parallel: 3        # começa com 3: sobe para 5 só se os captchas (resumo do job publish) ficarem estáveis
+      matrix:
+        include: ${{ fromJSON(needs.plan.outputs.matrix) }}
+    env:
+      FLIGHTS_TIME_BUDGET: "40"   # min: depois disso não começa consulta nova; o que faltar fica para a próxima coleta (o job tem 45)
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Baixar o repositório de dados (privado) em data/
+        uses: actions/checkout@v4
+        with:
+          repository: ${{ env.DATA_REPO }}
+          token: ${{ secrets.DATA_REPO_TOKEN }}
+          path: data
+
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+          cache: pip
+
+      - name: Instalar
+        run: pip install -e .
+
+      - name: Navegadores do Playwright (com cache)
+        uses: actions/cache@v4
+        with:
+          path: ~/.cache/ms-playwright
+          key: playwright-${{ runner.os }}-${{ hashFiles('pyproject.toml') }}
+
+      - name: Instalar o Chromium
+        run: python -m playwright install --with-deps chromium
+
+      - name: Coletar a busca ${{ matrix.id }}
+        id: collect
+        continue-on-error: true   # o shard (inclusive as consultas com erro) é enviado de qualquer jeito
+        env:
+          ID: ${{ matrix.id }}
+        run: |
+          set -eu
+          case "$ID" in ''|*[!0-9]*) echo "id inválido"; exit 1;; esac
+          # cópia do banco: o histórico alimenta o planejador e o reaproveitamento de detalhes; só as linhas novas vão no shard
+          cp data/cloud.db work.db
+          python -m flights --db work.db sync-watches data/watches.json
+          python -m flights --db work.db run "$ID" --max-offers 30 --detail 15 --shard-out shard.json.gz
+
+      - name: Enviar o resultado para o repositório de dados (privado)
+        if: always() && hashFiles('shard.json.gz') != ''
+        working-directory: data
+        env:
+          ID: ${{ matrix.id }}
+        run: |
+          git config user.name "flights-bot"
+          git config user.email "flights-bot@users.noreply.github.com"
+          mkdir -p shards
+          cp ../shard.json.gz "shards/${FLIGHTS_RUN_ID}-${ID}.json.gz"
+          git add shards
+          git commit -q -m "shard da busca ${ID} (execução ${FLIGHTS_RUN_ID})"
+          BRANCH="$(git rev-parse --abbrev-ref HEAD)"
+          for i in 1 2 3 4 5; do
+            git pull -q --rebase -X theirs origin "$BRANCH" && git push -q origin "HEAD:$BRANCH" && exit 0
+            sleep $((i * 3))
+          done
+          exit 1
+
+      - name: Resultado da coleta
+        if: steps.collect.outcome == 'failure'
+        run: |
+          # só contagens (a rota/datas das buscas não vão para este log público)
+          python -m flights --db work.db summary || true
+          echo "::error::Nenhuma consulta desta busca deu certo (captcha do Google, erro...). O motivo aparece no painel."
+          exit 1
+
+  publish:
+    needs: [plan, collect]
+    # Só roda se houve o que coletar (sem nada vencido não há commit): `always()` deixa juntar o que deu certo mesmo
+    # que algum job de coleta tenha falhado.
+    if: always() && needs.plan.outputs.any == 'true'
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Baixar o repositório de dados (privado) em data/
+        uses: actions/checkout@v4
+        with:
+          repository: ${{ env.DATA_REPO }}
+          token: ${{ secrets.DATA_REPO_TOKEN }}
+          path: data
+
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+          cache: pip
+
+      - name: Instalar
+        run: pip install -e .
+
+      - name: Sincronizar buscas e juntar os resultados dos jobs
+        run: |
+          set -eu
+          python -m flights --db data/cloud.db sync-watches data/watches.json
+          python -m flights --db data/cloud.db merge data/shards/*.json.gz
+
+      - name: Resumo da execução
+        id: summary
+        continue-on-error: true
+        run: python -m flights --db data/cloud.db summary --expect-any
+
+      - name: Gerar dados do painel
+        run: python -m flights --db data/cloud.db publish --out data
+
+      - name: Salvar resultados no repositório de dados
+        working-directory: data
+        run: |
+          git config user.name "flights-bot"
+          git config user.email "flights-bot@users.noreply.github.com"
+          git rm -rq --ignore-unmatch shards      # já foram juntados ao banco
           git add cloud.db dashboard.json
           if git diff --cached --quiet; then echo "Nada novo."; exit 0; fi
           git commit -q -m "coleta $(date -u +%Y-%m-%dT%H:%MZ)"
@@ -128,18 +245,8 @@ jobs:
         run: gh api -X PUT "repos/${GITHUB_REPOSITORY}/actions/workflows/scrape.yml/enable"
 
       - name: Falha na coleta (bloqueio do Google, erro...)
-        if: steps.collect.outcome == 'failure'
+        if: steps.summary.outcome == 'failure'
         run: |
-          # só status e contagens (a rota/datas das buscas não vão para este log público)
-          python - <<'PY'
-          import sqlite3
-          c = sqlite3.connect("data/cloud.db")
-          rows = c.execute("select status, count(*) from searches where scraped_at >= strftime('%Y-%m-%dT%H:%M:%SZ','now','-30 minutes') group by 1").fetchall()
-          print("Buscas desta execução:", ", ".join(f"{n} {s}" for s, n in rows) or "nenhuma")
-          if any(s == "blocked" for s, _ in rows):
-              print("O Google pediu captcha (muitas consultas seguidas do mesmo IP). Não é bug: o agendamento tenta de novo na próxima hora.")
-              print("Evite disparar várias execuções manuais em sequência.")
-          else:
-              print("Detalhe do erro: aviso na busca, no painel.")
-          PY
+          echo "::error::Nenhuma consulta desta execução deu certo. O Google pode ter pedido captcha (muitas consultas seguidas); o agendamento tenta de novo na próxima hora."
+          echo "Evite disparar várias execuções manuais em sequência."
           exit 1

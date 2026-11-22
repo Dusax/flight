@@ -14,7 +14,7 @@ def make(monkeypatch, outcomes):
     s = sc.FlightScraper()
     calls = {"n": 0, "resets": 0}
 
-    def once(spec, detail, booking):
+    def once(spec, detail, booking, known=None, ttl=None):
         calls["n"] += 1
         out = outcomes[calls["n"] - 1]
         if isinstance(out, Exception):

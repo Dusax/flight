@@ -132,7 +132,7 @@ def test_cli_due_codigo_de_saida(tmp_path, capsys):
     db.sync_watches(conn, [item(1, schedule="0 3 * * *")])
     conn.close()
     s = S.parse("0 3 * * *")   # só coleta às 3h: vence apenas se houver um horário nas últimas 3 horas cheias
-    expected = 0 if S.latest_slot(s, datetime.now(timezone.utc)) else 1
+    expected = 0 if S.latest_slot(s, datetime.now(timezone.utc)) else cli.EXIT_NONE_DUE
     assert cli.main(["--db", dbp, "due"]) == expected
     assert "busca(s) vencida(s)" in capsys.readouterr().out
 
@@ -159,3 +159,29 @@ def test_watch_add_com_cron_pela_linha_de_comando(tmp_path, capsys):
     conn = db.connect(dbp)
     w = watch(conn, 1)
     assert w["schedule"] == "0 22-5/2 * * *" and w["every_hours"] is None
+
+
+def test_due_nenhuma_vencida_nao_se_confunde_com_crash(tmp_path, monkeypatch, capsys):
+    """Código 10 = nenhuma vencida; um erro dentro do `due` devolve outro código (o workflow trata como erro, não como 'nada')."""
+    dbp = str(tmp_path / "n.db")
+    db.connect(dbp).close()
+    assert cli.main(["--db", dbp, "due"]) == cli.EXIT_NONE_DUE == 10
+    def boom(*a, **k):
+        raise RuntimeError("quebrou")
+    monkeypatch.setattr(db, "is_due", boom)
+    conn = db.connect(dbp)
+    db.sync_watches(conn, [item(1, every_hours=6)])
+    conn.close()
+    with pytest.raises(RuntimeError):
+        cli.main(["--db", dbp, "due"])          # o python sai com 1 (traceback): diferente de 10
+
+
+def test_orcamento_de_tempo_invalido_nao_derruba(capsys):
+    assert cli.parse_time_budget(None, None) is None
+    assert cli.parse_time_budget(None, "38") == 38.0
+    assert cli.parse_time_budget("12.5", "38") == 12.5          # a linha de comando manda
+    assert cli.parse_time_budget(None, "38min") is None         # inválido: aviso, sem exceção
+    assert cli.parse_time_budget("abc", "30") == 30.0           # CLI inválido cai para o ambiente
+    assert cli.parse_time_budget(0, "-5") is None
+    out = capsys.readouterr().out
+    assert "FLIGHTS_TIME_BUDGET" in out and "--time-budget" in out

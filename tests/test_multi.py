@@ -214,7 +214,7 @@ def test_cli_multi_compare_passes_booking_and_detail(monkeypatch, tmp_path, caps
     assert cli.main(argv) == 0
     kinds = [(s.trip_type, s.leg_index) for s, _ in fake.calls]
     assert kinds == [("multi_city", None), ("one_way", 0), ("one_way", 1)]
-    assert all(kw == {"detail_offers": 12, "booking_top": 2} for _, kw in fake.calls)
+    assert all(kw["detail_offers"] == 12 and kw["booking_top"] == 2 and kw["detail_ttl_h"] == 24.0 and kw["known"] == {} for _, kw in fake.calls)
     out = capsys.readouterr().out
     assert "trecho 1, só ida" in out
 

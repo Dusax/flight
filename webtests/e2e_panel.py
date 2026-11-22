@@ -383,6 +383,20 @@ try:
         pg.unroute("**/api/dashboard", partial_fail)
         print("12j. cartão: falha parcial só com o selo (causa no balão); falha total mantém a causa")
 
+        # ---- sem o módulo series.js (ex.: deploy parcial) o painel continua: só some o acompanhamento de voos ----
+        pg2 = ctx.new_page(); errs2 = []
+        pg2.on("pageerror", lambda e: errs2.append(str(e)))
+        pg2.route("**/series.js", lambda r: r.abort())
+        pg2.goto(base + "/#/viagem/4/voos"); pg2.wait_for_selector(".fl")
+        assert pg2.locator(".fl [data-track]").count() == 0 and pg2.locator(".tab[data-tab=acompanhar]").count() == 0
+        assert pg2.locator(".fl .star").count() > 0, "o resto da aba Voos funciona"
+        pg2.click("#btn-favs"); pg2.wait_for_selector(".panel.empty, .fav")
+        pg2.goto(base + "/#/viagem/4/acompanhar"); pg2.wait_for_selector(".trip-head")
+        assert "Voos acompanhados" not in pg2.inner_text(".tabs")
+        assert not errs2, errs2
+        pg2.close()
+        print("12k. sem series.js: Voos e Favoritos continuam funcionando, sem os botões de acompanhamento")
+
         pg.goto(base + "/#/viagem/1/voos"); pg.wait_for_selector(".fl"); assert not pg.is_visible("#dlg-login")
         print("13. link direto + sessão mantida após recarregar")
         ctx.clear_cookies(); pg.click('[data-nav="/"]'); pg.click('.tcard [data-act=run]')

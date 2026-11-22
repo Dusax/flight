@@ -5,6 +5,7 @@ import csv
 import itertools
 import json
 import os
+import re
 import random
 import sys
 import time
@@ -13,6 +14,7 @@ from pathlib import Path
 from typing import Iterable, List, Optional, Tuple
 
 from . import db
+from .details import DEFAULT_TTL_H
 from .models import normalize_ends, CABINS, Leg, SearchSpec, parse_date, parse_iata, plan_specs
 from .scraper import BlockedError, FlightScraper, ScrapeError
 
@@ -98,42 +100,90 @@ MAX_DASHBOARD_BYTES = 3_000_000
 QUIET = False  # --quiet: nada que identifique a busca (rota, datas, preços, mensagens de erro) vai para a tela
 
 
+class Pacer:
+    """Pausa entre consultas que se adapta: `base` segundos; dobra (até 4×) depois de um erro e volta aos poucos a cada
+    sucesso. Com o Google tranquilo a coleta anda depressa; com sinais de bloqueio, ela desacelera sozinha."""
+
+    def __init__(self, base: float):
+        self.base = max(0.0, base)
+        self.cur = self.base
+        self.cap = max(self.base * 4, self.base)
+
+    def wait(self) -> None:
+        if self.cur > 0:
+            time.sleep(self.cur * (0.75 + random.random() * 0.5))   # pausa irregular entre buscas
+
+    def ok(self) -> None:
+        self.cur = max(self.base, self.cur * 0.8)
+
+    def error(self) -> None:
+        self.cur = min(self.cap, max(self.cur, 1.0) * 2)
+
+
+def print_profile(scraper, n_queries: int) -> None:
+    """--profile: tempo médio de cada fase da consulta (só números, nada que identifique a busca)."""
+    timings = getattr(scraper, "timings", None)
+    if not timings or not n_queries:
+        return
+    total = sum(timings.values())
+    print(f"\nTempo por fase ({n_queries} consulta(s), {total:.0f} s no navegador):")
+    for phase, sec in sorted(timings.items(), key=lambda kv: -kv[1]):
+        print(f"  {phase:<22} {sec / n_queries:6.1f} s por consulta  ({100 * sec / total:3.0f} %)")
+
+
 def run_specs(
     conn, scraper: FlightScraper, items: List[Tuple[Optional[int], SearchSpec, int]], delay: float, top: int,
     max_offers: Optional[int] = None, detail: int = 30, deadline: Optional[float] = None,
+    detail_ttl: float = DEFAULT_TTL_H, profile: bool = False,
 ) -> Tuple[int, int]:
     """Coleta cada (watch_id, spec), grava no banco e imprime o resumo. Devolve (ok, falhas).
 
     Com QUIET (usado no GitHub Actions de repositório público, cujos logs são públicos) só saem
     contagens e status: as mensagens de erro do Playwright trazem a URL da busca, que contém a rota.
     """
+    pacer = Pacer(delay)
+    try:
+        return _run_items(conn, scraper, items, top, max_offers, detail, deadline, detail_ttl, pacer)
+    finally:
+        if profile:
+            print_profile(scraper, getattr(scraper, "counts", {}).get("goto", 0))
+
+
+def _run_items(conn, scraper, items, top, max_offers, detail, deadline, detail_ttl, pacer) -> Tuple[int, int]:
     ok = failed = 0
     for i, (watch_id, spec, booking_top) in enumerate(items):
         if deadline is not None and time.monotonic() > deadline:
             print(f"\nTempo da execução esgotado: {len(items) - i} consulta(s) ficam para a próxima coleta.")
             break
         if i:
-            time.sleep(delay * (0.75 + random.random() * 0.5))  # pausa irregular entre buscas
+            pacer.wait()
         if QUIET:
             print(f"[{i + 1}/{len(items)}] ", end="", flush=True)
         else:
             print(f"\n[{i + 1}/{len(items)}] {spec.label()}  ({spec.adults} adulto(s), {spec.cabin}"
                   f"{', máx. ' + str(spec.max_stops) + ' esc.' if spec.max_stops is not None else ''})")
         try:
-            result = scraper.search(spec, detail_offers=detail, booking_top=booking_top)
+            try:
+                known = db.known_details(conn, watch_id, spec)   # o que já se sabe dos voos: detalhe/compra recentes não se repetem
+            except Exception:                                    # histórico ilegível não pode impedir a coleta
+                known = {}
+            result = scraper.search(spec, detail_offers=detail, booking_top=booking_top, known=known, detail_ttl_h=detail_ttl)
         except BlockedError as e:
+            pacer.error()
             db.save_search(conn, spec, error=str(e), status="blocked", watch_id=watch_id)
             print("BLOQUEADO pelo Google (captcha); parando as demais." if QUIET else f"  ✗ BLOQUEADO: {e}")
             if not QUIET:
                 print("  Parando as buscas restantes para não piorar o bloqueio.")
             return ok, failed + (len(items) - i)
         except ScrapeError as e:
+            pacer.error()
             db.save_search(conn, spec, error=str(e), watch_id=watch_id)  # o texto completo fica só no banco (privado)
             print("erro (detalhe no painel)" if QUIET else f"  ✗ erro: {e}")
             failed += 1
             continue
         sid = db.save_search(conn, spec, result, watch_id=watch_id, max_offers=max_offers)
         ok += 1
+        pacer.ok()
         if QUIET:
             print(f"ok · {len(result.offers)} voos" + (f" · {len(result.warnings)} aviso(s)" if result.warnings else "")
                   + (f" · {result.cards_unreadable} ilegível(is)" if result.cards_unreadable else ""))
@@ -226,7 +276,7 @@ def _search_now(args, spec: SearchSpec) -> int:
     conn = db.connect(args.db)
     with make_scraper(args) as scraper:
         ok, failed = run_specs(conn, scraper, [(None, s, args.booking) for s in specs], args.delay, args.top,
-                               detail=args.detail)
+                               detail=args.detail, detail_ttl=args.detail_ttl, profile=args.profile or bool(os.environ.get("FLIGHTS_PROFILE")))
     return 0 if ok and not failed else 1
 
 
@@ -257,9 +307,21 @@ def cmd_run(args) -> int:
         print("Todas as datas monitoradas já passaram.")
         return 0 if args.due else 1
     print(f"{len(rows)} busca(s) monitorada(s) → {len(items)} consulta(s) ao Google Voos.")
+    since = db.max_search_id(conn)
+    try:
+        return _run_collect(args, conn, items, since)
+    finally:
+        if getattr(args, "shard_out", None):   # exporta o que esta execução coletou (mesmo se algo deu errado no meio)
+            shard = db.export_shard(conn, since, os.environ.get("FLIGHTS_RUN_ID"))
+            db.write_shard(args.shard_out, shard)
+            print(f"Shard: {len(shard['searches'])} coleta(s) em {args.shard_out}")
+
+
+def _run_collect(args, conn, items, since) -> int:
     with make_scraper(args) as scraper:
-        budget_min = args.time_budget or float(os.environ.get("FLIGHTS_TIME_BUDGET") or 0) or None
+        budget_min = parse_time_budget(args.time_budget, os.environ.get("FLIGHTS_TIME_BUDGET"))
         ok, failed = run_specs(conn, scraper, items, args.delay, args.top, args.max_offers, args.detail,
+                               detail_ttl=args.detail_ttl, profile=args.profile or bool(os.environ.get("FLIGHTS_PROFILE")),
                                deadline=time.monotonic() + budget_min * 60 if budget_min else None)
     print(f"\nConcluído: {ok} ok, {failed} com falha.")
     if ok and failed:
@@ -269,12 +331,105 @@ def cmd_run(args) -> int:
     return 0 if ok or not failed else 1
 
 
+def parse_time_budget(cli_value, env_value) -> Optional[float]:
+    """Minutos de orçamento de tempo da execução. Valor inválido (ou <= 0) vira aviso e é ignorado: nunca derruba a coleta."""
+    for raw, origin in ((cli_value, "--time-budget"), (env_value, "FLIGHTS_TIME_BUDGET")):
+        if raw in (None, ""):
+            continue
+        try:
+            v = float(raw)
+        except (TypeError, ValueError):
+            print(f"Aviso: {origin}={raw!r} não é um número de minutos; ignorado.")
+            continue
+        if v > 0:
+            return v
+        print(f"Aviso: {origin}={raw!r} deve ser maior que zero; ignorado.")
+    return None
+
+
+EXIT_NONE_DUE = 10   # `flights due`: nenhuma busca vencida (um crash devolve 1 e NÃO pode ser confundido com isto)
+
+
 def cmd_due(args) -> int:
-    """Usado pelo workflow para pular a instalação do Chromium nas rodadas em que nada vence."""
+    """Usado pelo workflow para pular a instalação do Chromium nas rodadas em que nada vence.
+    Código de saída: 0 = há busca vencida; 10 = nenhuma; qualquer outro valor = erro."""
     conn = db.connect(args.db)
     n = sum(1 for r in db.list_watches(conn, only_active=True) if db.is_due(conn, r))
     print(f"{n} busca(s) vencida(s).")
-    return 0 if n else 1
+    return 0 if n else EXIT_NONE_DUE
+
+
+def _read_requests(path) -> dict:
+    """requests.json: pedidos do painel que ainda não rodaram ({"ids": [...], "all": bool})."""
+    if not path or not Path(path).exists():
+        return {"ids": set(), "all": False}
+    try:
+        d = json.loads(Path(path).read_text(encoding="utf-8") or "{}")
+    except ValueError:
+        print("Aviso: requests.json ilegível; ignorado.")
+        return {"ids": set(), "all": False}
+    ids = {int(x) for x in d.get("ids", []) if isinstance(x, int) or (isinstance(x, str) and x.isdigit())}
+    return {"ids": ids, "all": bool(d.get("all"))}
+
+
+def plan_ids(conn, event: str, input_ids, requested: dict) -> List[int]:
+    """Buscas a coletar. Disparo manual sem ids (e sem pedidos pendentes) = todas as ativas (menos consultas pontuais);
+    ids pedidos (no disparo ou acumulados em requests.json) rodam sempre; na rodada agendada entram também as vencidas."""
+    active = db.list_watches(conn, only_active=True)
+    by_id = {r["id"]: r for r in active}
+    ids = set(input_ids) | set(requested["ids"])
+    if requested["all"] or (event == "dispatch" and not ids):
+        ids |= {r["id"] for r in active if not r["once"]}
+    if event == "schedule":
+        ids |= {r["id"] for r in active if db.is_due(conn, r)}
+    return sorted(i for i in ids if i in by_id)
+
+
+def cmd_plan(args) -> int:
+    conn = db.connect(args.db)
+    requested = _read_requests(args.requests)
+    input_ids = {int(x) for x in re.split(r"[,\s]+", args.ids or "") if x.isdigit()}
+    ids = plan_ids(conn, args.event, input_ids, requested)
+    matrix = json.dumps([{"id": i} for i in ids], separators=(",", ":"))
+    print(f"{len(ids)} busca(s) para coletar.")
+    out = os.environ.get("GITHUB_OUTPUT")
+    if out:
+        with open(out, "a", encoding="utf-8") as f:
+            f.write(f"any={'true' if ids else 'false'}\nmatrix={matrix}\n")
+    else:
+        print(json.dumps({"any": bool(ids), "matrix": json.loads(matrix)}))
+    if args.requests and Path(args.requests).exists() and (requested["ids"] or requested["all"]):
+        Path(args.requests).write_text(json.dumps({"ids": [], "all": False}) + "\n", encoding="utf-8")   # pedidos atendidos
+    return 0
+
+
+def cmd_merge(args) -> int:
+    conn = db.connect(args.db)
+    bad = 0
+    total = {"searches": 0, "offers": 0, "duplicated": 0, "removed_watch": 0}
+    for f in args.files:
+        if not Path(f).exists():
+            continue
+        try:
+            r = db.import_shard(conn, db.read_shard(f))
+        except (OSError, ValueError, KeyError) as e:
+            print(f"Aviso: shard {Path(f).name} não pôde ser lido ({type(e).__name__}); ignorado.")
+            bad += 1
+            continue
+        for k, v in r.items():
+            total[k] += v
+    print(f"Shards: {total['searches']} coleta(s) e {total['offers']} voo(s) importados"
+          f" · {total['duplicated']} repetida(s) · {total['removed_watch']} de busca removida")
+    return 1 if bad else 0
+
+
+def cmd_summary(args) -> int:
+    conn = db.connect(args.db)
+    s = db.run_summary(conn, args.run_tag) if args.run_tag else {"total": 0, "ok": 0, "error": 0, "blocked": 0, "empty": 0}
+    print(f"Execução: {s['total']} consulta(s) · {s['ok']} ok · {s['empty']} sem voos · {s['error']} com erro · {s['blocked']} com captcha")
+    if s["total"] == 0:
+        return 1 if args.expect_any else 0
+    return 0 if s["ok"] or s["empty"] else 1
 
 
 def cmd_sync(args) -> int:
@@ -478,7 +633,11 @@ def build_parser() -> argparse.ArgumentParser:
     sub = p.add_subparsers(dest="cmd", required=True)
 
     def scrape_opts(sp):
-        sp.add_argument("--delay", type=float, default=6.0, help="pausa média entre buscas, em s (default 6)")
+        sp.add_argument("--delay", type=float, default=3.0,
+                        help="pausa média entre buscas, em s (default 3; dobra após erro e volta sozinha)")
+        sp.add_argument("--detail-ttl", type=float, default=DEFAULT_TTL_H, metavar="HORAS",
+                        help="não lê de novo o detalhe/compra de um voo já conhecido há menos de N horas (default 24; 0 = sempre ler)")
+        sp.add_argument("--profile", action="store_true", help="mostra o tempo médio de cada fase da consulta")
         sp.add_argument("--top", type=int, default=8, help="quantos voos mostrar por busca (default 8)")
         sp.add_argument("--detail", type=int, default=30, metavar="N",
                         help="lê aeronave, assentos, comodidades etc. dos N voos mais baratos (default 30; 0 = não)")
@@ -499,12 +658,29 @@ def build_parser() -> argparse.ArgumentParser:
     r.add_argument("ids", nargs="*", type=int, help="ids específicos (default: todos)")
     r.add_argument("--due", action="store_true", help="só as buscas cuja frequência (--every) já venceu")
     r.add_argument("--max-offers", type=int, metavar="N", help="guarda só os N voos mais baratos de cada coleta")
+    r.add_argument("--shard-out", metavar="ARQUIVO.json.gz",
+                   help="grava só as coletas novas desta execução num arquivo, para outro banco importar (`flights merge`)")
     r.add_argument("--time-budget", type=float, metavar="MIN",
                    help="para de começar consultas depois de MIN minutos (o que faltar fica para a próxima coleta); ou env FLIGHTS_TIME_BUDGET")
     scrape_opts(r)
     r.set_defaults(func=cmd_run)
 
-    du = sub.add_parser("due", help="diz quantas buscas vencem agora (código de saída 0 se alguma vence, 1 se nenhuma)")
+    pl = sub.add_parser("plan", help="decide que buscas coletar (vencidas, pedidas pelo painel ou todas) e devolve a matriz do workflow")
+    pl.add_argument("--event", choices=["schedule", "dispatch"], default="schedule", help="o que disparou a execução")
+    pl.add_argument("--ids", default="", help="ids pedidos no disparo manual, separados por vírgula")
+    pl.add_argument("--requests", metavar="ARQUIVO", help="requests.json do repositório de dados (pedidos do painel); é esvaziado")
+    pl.set_defaults(func=cmd_plan)
+
+    mg = sub.add_parser("merge", help="junta shards (`run --shard-out`) neste banco")
+    mg.add_argument("files", nargs="*", help="arquivos .json.gz")
+    mg.set_defaults(func=cmd_merge)
+
+    sm = sub.add_parser("summary", help="contagens por status de uma execução (--run-tag); sai com 1 se nada deu certo")
+    sm.add_argument("--run-tag", default=os.environ.get("FLIGHTS_RUN_ID"), help="id da execução (default env FLIGHTS_RUN_ID)")
+    sm.add_argument("--expect-any", action="store_true", help="falha também quando não há nenhuma consulta registrada")
+    sm.set_defaults(func=cmd_summary)
+
+    du = sub.add_parser("due", help="diz quantas buscas vencem agora (saída 0 = alguma vence, 10 = nenhuma; outro código = erro)")
     du.set_defaults(func=cmd_due)
 
     sy = sub.add_parser("sync-watches", help="espelha um watches.json no banco (usado pelo GitHub Actions)")

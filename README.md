@@ -20,6 +20,20 @@ frequência de cada uma pelo próprio painel e pode disparar uma coleta na hora.
 - **Comparar separado:** além do pacote, consulta cada trecho como só ida e soma os
   mais baratos. O painel diz se o pacote ou o separado compensa, e quanto. Vale para
   ida e volta e multi-destino. Passagens separadas não têm proteção de conexão.
+- **Coleta rápida (como funciona):** o workflow tem três etapas. **plan** decide que buscas coletar (as vencidas pelo
+  horário, as pedidas no painel ou todas) e monta a matriz; **collect** roda **um job por busca, em paralelo** (até 3 ao
+  mesmo tempo, cada um com o seu navegador) e envia o resultado (“shard”) para o repositório **privado** de dados — nunca
+  como artefato do Actions, que num repositório público é baixável por qualquer pessoa; **publish** junta os shards no
+  `cloud.db`, gera o `dashboard.json` e grava. Sem nada a coletar, só o `plan` roda (~30 s). Os pedidos do botão “Buscar
+  agora” ficam acumulados em `requests.json` no repositório de dados (o GitHub guarda só uma execução pendente; assim
+  dois pedidos seguidos não se perdem). O resumo do `publish` mostra, só em números, quantas consultas deram certo, erro
+  ou captcha: se os captchas ficarem estáveis por algumas execuções, dá para subir `max-parallel` (3 → 5) no workflow.
+  Por consulta, a coleta ficou mais enxuta: **detalhe e tela de compra de um voo já conhecido só são lidos de novo
+  depois de 24 h** (`--detail-ttl`; o preço e os horários vêm sempre da página; bagagem, aeronave e faixa típica são
+  copiados adiante, e os preços dos vendedores nunca — a tela de compra mostra “conferida há Xh”), imagens/mídia/fontes
+  não são baixadas (`FLIGHTS_NO_BLOCK=1` desliga), as esperas fixas viraram esperas por condição e a pausa entre
+  consultas (`--delay`, padrão 3 s) dobra após um erro e volta sozinha. `flights run --profile` mostra o tempo médio de
+  cada fase. Linha de comando: `flights plan`, `flights run <id> --shard-out`, `flights merge`, `flights summary`.
 - **Voos acompanhados (evolução de um voo):** a aba **Voos acompanhados** de cada viagem mostra o preço de **um voo
   específico** a cada coleta. Escolha a data e o voo pelo número, companhia ou horário (campo de busca: “LA 8084”);
   os seus favoritos da viagem aparecem como atalhos. Mostra preço atual (e variação desde a coleta anterior), menor e

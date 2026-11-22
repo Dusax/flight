@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import json
+import os
 import sqlite3
 from datetime import date, datetime, timedelta, timezone
 from pathlib import Path
@@ -59,6 +60,7 @@ CREATE TABLE IF NOT EXISTS searches (
     min_nonstop  REAL,                    -- menor preço entre os voos diretos
     fastest_min  INTEGER,                 -- menor duração (min) entre os voos coletados
     price_level  TEXT,                    -- low | typical | high (avaliação do Google)
+    run_tag      TEXT,                    -- id da execução (GITHUB_RUN_ID): agrupa as consultas de uma mesma coleta
     typical_low  REAL,                    -- faixa de preço típica da rota (Google; só ida e ida e volta)
     typical_high REAL,
     url          TEXT
@@ -92,7 +94,9 @@ CREATE TABLE IF NOT EXISTS offers (
     overnight        INTEGER,
     often_delayed    INTEGER,
     segments_json    TEXT,               -- um item por voo da viagem: aeronave, assentos, comodidades, conexão...
-    booking_json     TEXT                -- tela de compra: bagagem, vendedores, faixa típica de preço
+    booking_json     TEXT,               -- tela de compra: bagagem, vendedores, faixa típica de preço
+    detail_at        TEXT,               -- quando o detalhe foi lido de verdade (copiado adiante ao reaproveitar)
+    booking_at       TEXT                -- idem, para a tela de compra
 );
 
 CREATE INDEX IF NOT EXISTS idx_offers_search   ON offers(search_id);
@@ -122,9 +126,10 @@ def _migrate(conn) -> None:
                     "booking_top": "INTEGER NOT NULL DEFAULT 0", "date_ranges": "TEXT",
                     "budget": "INTEGER NOT NULL DEFAULT 40", "once": "INTEGER NOT NULL DEFAULT 0", "schedule": "TEXT"},
         "searches": {"min_nonstop": "REAL", "fastest_min": "INTEGER", "legs_json": "TEXT", "leg_index": "INTEGER",
-                     "typical_low": "REAL", "typical_high": "REAL"},
+                     "typical_low": "REAL", "typical_high": "REAL", "run_tag": "TEXT"},
         "offers": {"cabin": "TEXT", "aircraft": "TEXT", "co2_kg": "INTEGER", "co2_diff_pct": "INTEGER",
-                   "overnight": "INTEGER", "often_delayed": "INTEGER", "segments_json": "TEXT", "booking_json": "TEXT"},
+                   "overnight": "INTEGER", "often_delayed": "INTEGER", "segments_json": "TEXT", "booking_json": "TEXT",
+                   "detail_at": "TEXT", "booking_at": "TEXT"},
     }
     for table, cols in wanted.items():
         have = {r["name"] for r in conn.execute(f"PRAGMA table_info({table})")}
@@ -281,6 +286,7 @@ def save_search(
     watch_id: Optional[int] = None,
     url: Optional[str] = None,
     max_offers: Optional[int] = None,
+    run_tag: Optional[str] = None,
 ) -> int:
     """Grava a coleta. Com `max_offers`, só os N voos mais baratos vão para a tabela
     `offers` (os agregados min_price/min_nonstop/fastest_min usam todos os voos)."""
@@ -293,8 +299,8 @@ def save_search(
     cur = conn.execute(
         """INSERT INTO searches (watch_id, scraped_at, origin, destination, depart_date, return_date, trip_type,
                                  legs_json, leg_index, adults, cabin, max_stops, currency, status, error, offers_count, min_price,
-                                 min_nonstop, fastest_min, price_level, typical_low, typical_high, url)
-           VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)""",
+                                 min_nonstop, fastest_min, price_level, typical_low, typical_high, url, run_tag)
+           VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)""",
         (watch_id, utcnow(), spec.origin, spec.destination, spec.depart_date.isoformat(),
          spec.return_date.isoformat() if spec.return_date else None, spec.trip_type,
          spec.legs_json, spec.leg_index, spec.adults, spec.cabin, spec.max_stops, spec.currency, status, error, len(all_offers),
@@ -303,22 +309,23 @@ def save_search(
          min((o.duration_min for o in all_offers if o.duration_min), default=None),
          result.price_level if result else None,
          result.typical_low if result else None, result.typical_high if result else None,
-         (result.url if result else url)),
+         (result.url if result else url), run_tag or os.environ.get("FLIGHTS_RUN_ID") or None),
     )
     search_id = cur.lastrowid
     conn.executemany(
         """INSERT INTO offers (search_id, position, section, price, currency, airline, operated_by, flight_numbers,
                                origin, destination, dep_time, arr_time, duration_min, stops, layover_airports,
                                layovers_json, cabin, aircraft, co2_kg, co2_diff_pct, overnight, often_delayed,
-                               segments_json, booking_json)
-           VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)""",
+                               segments_json, booking_json, detail_at, booking_at)
+           VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)""",
         [(search_id, o.position, o.section, o.price, o.currency, o.airline, o.operated_by, o.flight_numbers,
           o.origin, o.destination, o.dep_time, o.arr_time, o.duration_min, o.stops, o.layover_airports,
           json.dumps(o.layovers, ensure_ascii=False) if o.layovers else None,
           o.cabin, o.aircraft, o.co2_kg, o.co2_diff_pct,
           None if o.overnight is None else int(o.overnight), None if o.often_delayed is None else int(o.often_delayed),
           json.dumps(o.segments, ensure_ascii=False, separators=(",", ":")) if o.segments else None,
-          json.dumps(o.booking, ensure_ascii=False, separators=(",", ":")) if o.booking else None) for o in offers],
+          json.dumps(o.booking, ensure_ascii=False, separators=(",", ":")) if o.booking else None,
+          o.detail_at, o.booking_at) for o in offers],
     )
     conn.commit()
     return search_id
@@ -512,6 +519,88 @@ def sync_watches(conn, items: List[dict]) -> Tuple[int, List[str]]:
     return len(keep), warnings
 
 
+# --- shards: coletas feitas em outro servidor (um job do GitHub por busca) ---------------------
+SHARD_VERSION = 1
+
+
+def _row_dict(row, drop=()) -> dict:
+    return {k: row[k] for k in row.keys() if k not in drop}
+
+
+def max_search_id(conn) -> int:
+    return conn.execute("SELECT COALESCE(MAX(id), 0) FROM searches").fetchone()[0]
+
+
+def export_shard(conn, since_search_id: int, run_tag: Optional[str] = None) -> dict:
+    """As coletas novas (searches com id > since_search_id) e os voos delas, sem os ids locais, para outro banco importar."""
+    offers: Dict[int, list] = {}
+    for o in conn.execute("SELECT * FROM offers WHERE search_id > ? ORDER BY id", (since_search_id,)):
+        offers.setdefault(o["search_id"], []).append(_row_dict(o, drop=("id", "search_id")))
+    searches = []
+    for r in conn.execute("SELECT * FROM searches WHERE id > ? ORDER BY id", (since_search_id,)):
+        d = _row_dict(r, drop=("id",))
+        d["offers"] = offers.get(r["id"], [])
+        searches.append(d)
+    return {"version": SHARD_VERSION, "run_tag": run_tag, "searches": searches}
+
+
+def import_shard(conn, shard: dict) -> Dict[str, int]:
+    """Junta um shard no banco: refaz os ids, ignora coletas de buscas que já foram removidas e **não duplica** se o mesmo
+    shard for aplicado de novo (a coleta é reconhecida por busca + execução + horário + datas)."""
+    if shard.get("version") != SHARD_VERSION:
+        raise ValueError(f"versão de shard não suportada: {shard.get('version')!r}")
+    watch_ids = {r[0] for r in conn.execute("SELECT id FROM watches")}
+    s_cols = {r["name"] for r in conn.execute("PRAGMA table_info(searches)")} - {"id"}
+    o_cols = {r["name"] for r in conn.execute("PRAGMA table_info(offers)")} - {"id", "search_id"}
+    added = dup = gone = n_offers = 0
+    for s in shard.get("searches", []):
+        wid = s.get("watch_id")
+        if wid is not None and wid not in watch_ids:
+            gone += 1                       # a busca foi apagada no painel enquanto a coleta rodava
+            continue
+        same = conn.execute(
+            """SELECT 1 FROM searches WHERE watch_id IS ? AND scraped_at = ? AND depart_date = ?
+               AND COALESCE(return_date,'') = COALESCE(?, '') AND COALESCE(legs_json,'') = COALESCE(?, '')
+               AND COALESCE(leg_index,-1) = COALESCE(?, -1) AND COALESCE(run_tag,'') = COALESCE(?, '')""",
+            (wid, s.get("scraped_at"), s.get("depart_date"), s.get("return_date"), s.get("legs_json"), s.get("leg_index"),
+             s.get("run_tag"))).fetchone()
+        if same:
+            dup += 1
+            continue
+        cols = [c for c in s if c in s_cols]
+        sid = conn.execute(f"INSERT INTO searches ({','.join(cols)}) VALUES ({','.join('?' * len(cols))})",
+                           [s[c] for c in cols]).lastrowid
+        for o in s.get("offers", []):
+            oc = [c for c in o if c in o_cols]
+            conn.execute(f"INSERT INTO offers (search_id,{','.join(oc)}) VALUES (?,{','.join('?' * len(oc))})", [sid] + [o[c] for c in oc])
+            n_offers += 1
+        added += 1
+    conn.commit()
+    return {"searches": added, "offers": n_offers, "duplicated": dup, "removed_watch": gone}
+
+
+def write_shard(path, shard: dict) -> None:
+    import gzip
+    Path(path).parent.mkdir(parents=True, exist_ok=True)
+    with gzip.open(path, "wt", encoding="utf-8") as f:
+        json.dump(shard, f, ensure_ascii=False, separators=(",", ":"))
+
+
+def read_shard(path) -> dict:
+    import gzip
+    with gzip.open(path, "rt", encoding="utf-8") as f:
+        return json.load(f)
+
+
+def run_summary(conn, run_tag: str) -> Dict[str, int]:
+    """Contagens por status das consultas de uma execução (só números: o log do Actions é público)."""
+    out = {"total": 0, "ok": 0, "empty": 0, "error": 0, "blocked": 0}
+    for status, n in conn.execute("SELECT status, COUNT(*) FROM searches WHERE run_tag = ? GROUP BY status", (run_tag,)):
+        out["total"] += n
+        out[status] = out.get(status, 0) + n
+    return out
+
+
 # --- JSON do painel ------------------------------------------------------------
 
 HISTORY_POINTS = 240   # pontos de histórico por combinação de datas
@@ -548,7 +637,7 @@ OFFERS_PER_LEG = 10    # voos exibidos por trecho na comparação "separado"
 
 _OFFER_COLS = """price, airline, operated_by, flight_numbers, origin, destination, dep_time, arr_time, duration_min,
                  stops, layover_airports, cabin, aircraft, co2_kg, co2_diff_pct, overnight, often_delayed,
-                 segments_json, booking_json"""
+                 segments_json, booking_json, detail_at, booking_at"""
 
 
 def _offer_dict(r: sqlite3.Row) -> dict:
@@ -573,6 +662,41 @@ def _rows_for(conn, watch_id: int, spec: SearchSpec) -> List[sqlite3.Row]:
         (watch_id, spec.depart_date.isoformat(), spec.return_date.isoformat() if spec.return_date else None,
          spec.legs_json, spec.adults, spec.cabin, spec.max_stops, spec.currency, spec.leg_index)).fetchall()
     return [r for r in rows if r["min_price"] is not None]
+
+
+def known_details(conn, watch_id: Optional[int], spec: SearchSpec, lookback: int = 8) -> Dict[str, dict]:
+    """O que já se sabe de cada voo desta combinação de datas: detalhe e tela de compra mais recentes, com a data em que
+    foram lidos de verdade. `watch_id` None (consulta avulsa) = sem histórico. A chave é `flight_key` (voo + saída);
+    a chave especial "__insight__" guarda a faixa de preço típica mais recente da combinação (reaproveitada por 24 h)."""
+    if watch_id is None:
+        return {}
+    rows = _rows_for(conn, watch_id, spec)[-lookback:]
+    if not rows:
+        return {}
+    ids = [r["id"] for r in rows]
+    stamp = {r["id"]: r["scraped_at"] for r in rows}
+    known: Dict[str, dict] = {}
+    q = ("SELECT search_id, flight_numbers, dep_time, cabin, aircraft, co2_kg, co2_diff_pct, overnight, often_delayed, "
+         "segments_json, booking_json, detail_at, booking_at FROM offers WHERE search_id IN (%s) AND flight_numbers IS NOT NULL "
+         "ORDER BY search_id" % ",".join("?" * len(ids)))
+    for r in conn.execute(q, ids):
+        k = flight_key(r["flight_numbers"], r["dep_time"])
+        segs = json.loads(r["segments_json"]) if r["segments_json"] else []
+        booking = json.loads(r["booking_json"]) if r["booking_json"] else None
+        e = known.setdefault(k, {})
+        if segs or r["aircraft"]:   # linhas mais novas sobrescrevem as antigas (ORDER BY search_id)
+            e["fields"] = {"cabin": r["cabin"], "aircraft": r["aircraft"], "co2_kg": r["co2_kg"], "co2_diff_pct": r["co2_diff_pct"],
+                           "overnight": None if r["overnight"] is None else bool(r["overnight"]),
+                           "often_delayed": None if r["often_delayed"] is None else bool(r["often_delayed"]), "segments": segs}
+            e["detail_at"] = r["detail_at"] or stamp[r["search_id"]]
+        if booking:
+            e["booking"] = booking
+            e["booking_at"] = r["booking_at"] or stamp[r["search_id"]]
+    last = conn.execute("SELECT scraped_at, typical_low, typical_high FROM searches WHERE id IN (%s) AND typical_low IS NOT NULL "
+                        "ORDER BY id DESC LIMIT 1" % ",".join("?" * len(ids)), ids).fetchone()
+    if last:
+        known["__insight__"] = {"typical_low": last["typical_low"], "typical_high": last["typical_high"], "at": last["scraped_at"]}
+    return known
 
 
 def _offers_for(conn, search_id: int, limit: int) -> List[dict]:
@@ -616,17 +740,21 @@ _BAD = ("blocked", "error")
 def _last_attempt(conn, watch_id: int) -> Optional[Dict]:
     """Resultado da coleta mais recente da busca, somando todas as consultas dela (datas flexíveis,
     trechos): se qualquer uma falhou, a falha aparece no painel mesmo que a última tenha dado certo."""
-    last = conn.execute("SELECT scraped_at FROM searches WHERE watch_id = ? ORDER BY id DESC LIMIT 1",
+    last = conn.execute("SELECT scraped_at, run_tag FROM searches WHERE watch_id = ? ORDER BY id DESC LIMIT 1",
                         (watch_id,)).fetchone()
     if not last:
         return None
-    try:
-        t0 = datetime.strptime(last["scraped_at"], "%Y-%m-%dT%H:%M:%SZ") - ATTEMPT_WINDOW
-        since = t0.strftime("%Y-%m-%dT%H:%M:%SZ")
-    except ValueError:
-        since = last["scraped_at"]
-    rows = conn.execute("SELECT status, error, scraped_at FROM searches WHERE watch_id = ? AND scraped_at >= ? ORDER BY id",
-                        (watch_id, since)).fetchall()
+    if last["run_tag"]:   # coleta identificada: vale a execução inteira, por mais que ela demore
+        rows = conn.execute("SELECT status, error, scraped_at FROM searches WHERE watch_id = ? AND run_tag = ? ORDER BY id",
+                            (watch_id, last["run_tag"])).fetchall()
+    else:                 # linhas antigas, sem identificação: janela de tempo
+        try:
+            t0 = datetime.strptime(last["scraped_at"], "%Y-%m-%dT%H:%M:%SZ") - ATTEMPT_WINDOW
+            since = t0.strftime("%Y-%m-%dT%H:%M:%SZ")
+        except ValueError:
+            since = last["scraped_at"]
+        rows = conn.execute("SELECT status, error, scraped_at FROM searches WHERE watch_id = ? AND scraped_at >= ? ORDER BY id",
+                            (watch_id, since)).fetchall()
     bad = [r for r in rows if r["status"] in _BAD]
     pick = next((r for r in bad if r["status"] == "blocked"), None) or (bad[-1] if bad else rows[-1])
     return {"status": pick["status"], "error": pick["error"], "scraped_at": last["scraped_at"],

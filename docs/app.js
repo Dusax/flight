@@ -403,7 +403,7 @@ function renderTrip(w, v) {
   const rw = canWrite();
   const hasDates = w.combos.length > 1;
   const hasCmp = w.combos.some((x) => x.separate);
-  const hasTrack = w.combos.some((x) => x.series && Object.keys(x.series.f || {}).length);
+  const hasTrack = !!window.Series && w.combos.some((x) => x.series && Object.keys(x.series.f || {}).length);   // sem series.js a aba some, o resto continua
   const tabs = TABS.filter(([k]) => (k !== "datas" || hasDates) && (k !== "comparar" || hasCmp) && (k !== "acompanhar" || hasTrack) && (c || k === "resumo" || k === "busca"));
   const tab = tabs.some(([k]) => k === v.tab) ? v.tab : "resumo";
   const count = { voos: c?.offers.length, acompanhar: state.favs.filter((f) => f.watch_id === w.id).length };
@@ -507,7 +507,7 @@ function paneVoos(w, c) {
       <label><input type="checkbox" data-flt="direct" ${f.direct ? "checked" : ""}> Só diretos</label>
       <span class="spacer"></span><span class="muted small">${list.length} voo${list.length === 1 ? "" : "s"} listado${list.length === 1 ? "" : "s"}${c.offers_count > all.length ? ` · ${c.offers_count} encontrados no total` : ""}</span></div>
     <div class="flights">${shown.length ? shown.map((o, i) => flightRow(w, o, { cheapest: o.price === cheapest, fastest: o.duration_min === fastest, key: `${w.id}-${c.depart_date}-${o.flight_numbers}-${o.dep_time}`, favId: canWrite() ? registerFav(w, c, o) : null,
-      trackId: c.series?.f?.[window.Series.flightKey(o)] ? `${comboIndex(w)}|${window.Series.flightKey(o)}` : null })).join("") : `<div class="panel empty"><p class="muted">Nenhum voo com esses filtros.</p></div>`}</div>
+      trackId: window.Series && c.series?.f?.[window.Series.flightKey(o)] ? `${comboIndex(w)}|${window.Series.flightKey(o)}` : null })).join("") : `<div class="panel empty"><p class="muted">Nenhum voo com esses filtros.</p></div>`}</div>
     ${list.length > f.limit ? `<button class="btn more-btn" data-more="${w.id}">Mostrar mais ${Math.min(12, list.length - f.limit)} voos</button>` : ""}`;
 }
 
@@ -546,13 +546,14 @@ function flightDetail(w, o) {
   const b = o.booking;
   let bk = "";
   if (b) {
-    const sellers = (b.sellers || []).map((s) => `${esc(s.seller)}${s.type ? ` (${s.type === "Airline" ? "companhia" : esc(s.type)})` : ""}: <b>${money(s.price, w.currency)}</b>`).join(" · ");
+    const sellers = (b.sellers || []).map((s) => `${esc(s.seller)}${s.type ? ` (${s.type === "Airline" ? "companhia" : esc(s.type)})` : ""}${s.price != null ? `: <b>${money(s.price, w.currency)}</b>` : ""}`).join(" · ");
+    const age = o.booking_at ? `<div class="bk-row muted small">${icon("clock")}Tela de compra conferida ${esc(ago(o.booking_at))}${b.carried ? "; os preços dos vendedores ficam de fora até a próxima conferência diária" : ""}</div>` : "";
     const link = googleUrl(b.url) ? `<a href="${esc(b.url)}" target="_blank" rel="noopener noreferrer">${icon("ext")}Abrir este voo no Google Voos</a>` : "";
     bk = `<div class="bk">
       <div class="bk-row">${icon("bag")}<b>Bagagem</b> ${b.bags && b.bags.length ? b.bags.map((x) => esc(ptBag(x))).join(" · ") : "sem informação"}</div>
       ${sellers ? `<div class="bk-row">${icon("tag")}<b>Vendedor</b> ${sellers}</div>` : ""}
       ${b.typical_low != null ? `<div class="bk-row">${icon("down")}<b>Faixa típica</b> ${money(b.typical_low, w.currency)}–${money(b.typical_high, w.currency)}${b.verdict ? ` · este voo está ${esc(VERDICT[b.verdict] || b.verdict)}` : ""}</div>` : ""}
-      ${b.bag_policy ? `<div class="bk-row muted small">${esc(b.bag_policy)}</div>` : ""}${link ? `<div class="bk-row">${link}</div>` : ""}</div>`;
+      ${b.bag_policy ? `<div class="bk-row muted small">${esc(b.bag_policy)}</div>` : ""}${age}${link ? `<div class="bk-row">${link}</div>` : ""}</div>`;
   }
   return segs + bk;
 }
@@ -849,7 +850,7 @@ function favCard(f, ws) {
     <div class="fav-head"><div class="fav-t"><div class="fav-route">${esc(cityLine(trip))}</div>
         <div class="muted small">${esc(favDatesText(f))} · salvo em ${esc(fmtStamp(f.saved_at))}</div></div>
       ${spark(i.history)}
-      <div class="fav-acts">${i.w && i.combo?.series?.f?.[window.Series.flightKey(f.offer)] ? `<button class="btn sm" data-favtrack="${esc(f.id)}">${icon("chart")}Evolução</button>` : ""}${i.w ? `<button class="btn sm" data-favopen="${esc(f.id)}">Ver na viagem${icon("chev")}</button>` : ""}</div>
+      <div class="fav-acts">${i.w && window.Series && i.combo?.series?.f?.[window.Series.flightKey(f.offer)] ? `<button class="btn sm" data-favtrack="${esc(f.id)}">${icon("chart")}Evolução</button>` : ""}${i.w ? `<button class="btn sm" data-favopen="${esc(f.id)}">Ver na viagem${icon("chev")}</button>` : ""}</div>
       <div class="chips fav-chips">${chips.join("")}</div>
       <div class="fav-price"><span class="muted small">Preço quando salvou${pkg}:</span> <b class="num">${money(f.price, cur)}</b>${delta ? ` <span class="price-d">${delta}</span>` : ""}</div></div>
     ${flightRow({ currency: cur, adults: f.trip.adults }, o, { key: `fav-${f.id}`, favId: f.id })}</section>`;
@@ -886,6 +887,7 @@ document.addEventListener("click", (e) => {
   const t = e.target.closest("[data-act],[data-tab],[data-combo],[data-nav],[data-open-trip],[data-open],[data-more],[data-fav],[data-favopen],[data-undo-fav],[data-dates-all],[data-track],[data-favtrack]"); if (!t) return;
   if (t.dataset.track != null && t.dataset.track !== "") { const [ci, ...k] = t.dataset.track.split("|"); return openTrack(state.view.id, +ci, k.join("|")); }
   if (t.dataset.favtrack) {
+    if (!window.Series) return;
     const f = state.favs.find((x) => x.id === t.dataset.favtrack), w = f && merged().find((x) => x.id === f.watch_id); if (!w) return;
     const ci = w.combos.findIndex((c) => comboDates(c).join(",") === f.dates.join(",")); if (ci < 0) return;
     return openTrack(w.id, ci, window.Series.flightKey(f.offer));

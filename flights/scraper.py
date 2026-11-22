@@ -1,9 +1,12 @@
 from __future__ import annotations
 
+import contextlib
 import os
 import random
 import re
 import time
+from collections import defaultdict
+from datetime import datetime, timezone
 from pathlib import Path
 from typing import Optional
 
@@ -11,8 +14,9 @@ from playwright.sync_api import Error as PlaywrightError
 from playwright.sync_api import TimeoutError as PlaywrightTimeout
 from playwright.sync_api import sync_playwright
 
+from .details import DEFAULT_TTL_H, carry_forward, is_fresh, plan_detail_needs
 from .models import ScrapeResult, SearchSpec
-from .parser import parse_booking, parse_cards, parse_insight
+from .parser import parse_booking, parse_card, parse_cards, parse_insight
 from .tfs import build_url
 
 USER_AGENT = (
@@ -46,6 +50,18 @@ _EXPAND_JS = """(n) => {
   for (const c of cards) {
     if (!best.includes(c.aria)) continue;
     const b = c.li.querySelector('button[aria-expanded="false"]');
+    if (b) { b.click(); clicked++; }
+  }
+  return clicked;
+}"""
+
+# Expande (clicando na seta) só os cards cujo aria-label está na lista; devolve quantos clicou.
+_EXPAND_ARIAS_JS = """(arias) => {
+  const want = new Set(arias); let clicked = 0;
+  for (const li of document.querySelectorAll('li')) {
+    const link = li.querySelector('[role="link"][aria-label*=" arrives at "]');
+    if (!link || !want.has(link.getAttribute('aria-label'))) continue;
+    const b = li.querySelector('button[aria-expanded="false"]');
     if (b) { b.click(); clicked++; }
   }
   return clicked;
@@ -122,6 +138,9 @@ class FlightScraper:
         self.timeout_s = timeout_s
         self.retry_wait = float(os.environ.get("FLIGHTS_RETRY_WAIT", 8))  # s, multiplicado pelo nº da tentativa
         self.max_expand = max_expand
+        self.block_assets = not os.environ.get("FLIGHTS_NO_BLOCK")   # não baixa imagem/mídia/fonte (só texto interessa)
+        self.timings = defaultdict(float)   # segundos por fase (--profile)
+        self.counts = defaultdict(int)
         self._pw = self._browser = self._context = None
 
     def __enter__(self) -> "FlightScraper":
@@ -141,7 +160,20 @@ class FlightScraper:
         return self
 
     def _new_context(self):
-        return self._browser.new_context(locale="en-US", user_agent=USER_AGENT, viewport={"width": 1366, "height": 900})
+        ctx = self._browser.new_context(locale="en-US", user_agent=USER_AGENT, viewport={"width": 1366, "height": 900})
+        if self.block_assets:
+            ctx.route("**/*", lambda route: route.abort() if route.request.resource_type in ("image", "media", "font") else route.continue_())
+        return ctx
+
+    @contextlib.contextmanager
+    def _t(self, phase: str):
+        """Mede o tempo de uma fase da consulta (somado em self.timings, para o --profile)."""
+        t0 = time.monotonic()
+        try:
+            yield
+        finally:
+            self.timings[phase] += time.monotonic() - t0
+            self.counts[phase] += 1
 
     def _reset_context(self) -> None:
         """Contexto novo (cookies e cache zerados): o Google às vezes devolve 'something went wrong' em série para
@@ -162,13 +194,16 @@ class FlightScraper:
             self._pw.stop()
 
     # ------------------------------------------------------------------
-    def search(self, spec: SearchSpec, attempts: int = 3, detail_offers: int = 30, booking_top: int = 0) -> ScrapeResult:
+    def search(self, spec: SearchSpec, attempts: int = 3, detail_offers: int = 30, booking_top: int = 0,
+               known: Optional[dict] = None, detail_ttl_h: float = DEFAULT_TTL_H) -> ScrapeResult:
         """`detail_offers`: quantos voos (os mais baratos) expandir para ler aeronave, assentos etc.
-        `booking_top`: em buscas só de ida, quantos voos abrir na tela de compra (bagagem, vendedores)."""
+        `booking_top`: em buscas só de ida, quantos voos abrir na tela de compra (bagagem, vendedores).
+        `known`: o que o banco já sabe de cada voo (`db.known_details`): detalhe/compra mais novos que `detail_ttl_h`
+        horas não são lidos de novo (são copiados adiante); o preço e os horários vêm sempre da página."""
         last: Optional[Exception] = None
         for attempt in range(1, attempts + 1):
             try:
-                return self._search_once(spec, detail_offers, booking_top)
+                return self._search_once(spec, detail_offers, booking_top, known or {}, detail_ttl_h)
             except BlockedError:
                 raise
             except ScrapeError as e:
@@ -180,37 +215,65 @@ class FlightScraper:
                     self._reset_context()
         raise last  # type: ignore[misc]
 
-    def _read_insight(self, page) -> dict:
-        """Abre 'View price history' e lê a faixa de preço típica da rota. Não é essencial: qualquer falha
-        (botão ausente, como no multi-destino, ou layout diferente) só deixa a informação de fora."""
-        for _ in range(2):
+    def _read_insight(self, page, spec: SearchSpec) -> dict:
+        """Abre 'View price history' e lê a faixa de preço típica da rota. Não é essencial: qualquer falha só deixa a
+        informação de fora. Multi-destino não tem o painel (pula, sem esperar); uma única tentativa, com espera curta."""
+        if spec.trip_type == "multi_city":
+            return {}
+        try:
+            btn = page.get_by_text("View price history", exact=True)
             try:
-                btn = page.get_by_text("View price history", exact=True)
-                try:
-                    btn.first.wait_for(state="visible", timeout=5000)
-                except PlaywrightTimeout:
-                    return {}
-                btn.first.click(timeout=4000)
-                try:
-                    page.wait_for_function("() => /usually cost between/.test(document.body.innerText)", timeout=6000)
-                except PlaywrightTimeout:
-                    pass
-                info = parse_insight(page.evaluate("document.body.innerText"))
-                page.keyboard.press("Escape")
-                page.wait_for_timeout(300)
-                if info.get("typical_low") is not None:
-                    return info
-            except (PlaywrightError, ValueError):
-                pass
-        return {}
+                btn.first.wait_for(state="visible", timeout=3500)
+            except PlaywrightTimeout:
+                return {}
+            btn.first.click(timeout=4000)
+            try:
+                page.wait_for_function("() => /usually cost between/.test(document.body.innerText)", timeout=5000)
+            except PlaywrightTimeout:
+                pass   # o nível pode ter vindo sem a faixa: segue só com o que leu
+            info = parse_insight(page.evaluate("document.body.innerText"))
+            page.keyboard.press("Escape")
+            return info
+        except (PlaywrightError, ValueError):
+            return {}
 
-    def _search_once(self, spec: SearchSpec, detail_offers: int, booking_top: int) -> ScrapeResult:
+    def _card_key(self, card: dict, spec: SearchSpec) -> Optional[str]:
+        """Identidade do voo de um card (número do voo + horário de saída), ou None se não der para ler."""
+        o = parse_card(card, spec)
+        return None if o is None else f"{o.flight_numbers}|{o.dep_time or ''}" if o.flight_numbers else None
+
+    def _settle(self, page, max_ms: int = 2500) -> None:
+        """Espera a lista parar de crescer (em vez de uma pausa fixa de 1,5 s)."""
+        last, same = -1, 0
+        for _ in range(max_ms // 250):
+            n = page.evaluate("(s) => document.querySelectorAll(s).length", CARD_SELECTOR)
+            same = same + 1 if n == last and n > 0 else 0
+            if same >= 2:
+                return
+            last = n
+            page.wait_for_timeout(250)
+
+    def _expand_cards(self, page, arias: list) -> None:
+        clicked = page.evaluate(_EXPAND_ARIAS_JS, arias)
+        if clicked:
+            try:
+                page.wait_for_function("(n) => document.querySelectorAll('button[aria-expanded=\"true\"]').length >= n",
+                                       arg=clicked, timeout=4000)
+            except PlaywrightTimeout:
+                pass
+            page.wait_for_timeout(250)   # o texto do detalhe termina de entrar no DOM
+
+    def _search_once(self, spec: SearchSpec, detail_offers: int, booking_top: int,
+                     known: Optional[dict] = None, ttl_h: float = DEFAULT_TTL_H) -> ScrapeResult:
+        known = known or {}
         url = build_url(spec, self.country)
         page = self._context.new_page()
         try:
-            page.goto(url, wait_until="domcontentloaded", timeout=self.timeout_s * 1000)
+            with self._t("goto"):
+                page.goto(url, wait_until="domcontentloaded", timeout=self.timeout_s * 1000)
             self._handle_consent(page)
-            state = self._wait_state(page)
+            with self._t("espera dos resultados"):
+                state = self._wait_state(page)
             if state == "blocked":
                 raise BlockedError("O Google bloqueou o acesso (captcha). Espere um tempo e tente de novo, ou use --headed.")
             if state == "error":
@@ -220,26 +283,47 @@ class FlightScraper:
             if state == "empty":
                 return ScrapeResult(offers=[], url=url)
 
-            page.wait_for_timeout(1500)  # deixa a lista terminar de renderizar
-            self._expand(page)
-            if detail_offers:
-                page.evaluate(_EXPAND_JS, detail_offers)
-                page.wait_for_timeout(1500)
-            data = page.evaluate(_EXTRACT_JS)
-            insight = self._read_insight(page)
+            with self._t("lista"):
+                self._settle(page)             # deixa a lista terminar de renderizar
+                self._expand(page)
+                data = page.evaluate(_EXTRACT_JS)
+            now = datetime.now(timezone.utc)
+
+            # O que falta ler? Voos já conhecidos (detalhe/compra mais novos que o TTL) não abrem de novo.
+            uniq = {}
+            for c in data["cards"]:
+                uniq.setdefault(c["aria"], {"aria": c["aria"], "key": self._card_key(c, spec)})
+            need_detail, need_booking = plan_detail_needs(
+                uniq.values(), known, detail_offers if detail_offers else 0, booking_top if spec.trip_type == "one_way" else 0, ttl_h, now)
+            if need_detail:
+                with self._t("detalhes"):
+                    self._expand_cards(page, need_detail)
+                    data = page.evaluate(_EXTRACT_JS)
+            insight_known = known.get("__insight__")
+            if spec.trip_type != "multi_city" and insight_known and is_fresh(insight_known.get("at"), now, ttl_h):
+                insight = {"typical_low": insight_known["typical_low"], "typical_high": insight_known["typical_high"]}
+            else:
+                with self._t("faixa típica"):
+                    insight = self._read_insight(page, spec)
             warnings: list = []
-            if booking_top:
-                if spec.trip_type == "one_way":
-                    self._booking_phase(page, data["cards"], booking_top, warnings)
-                else:
-                    warnings.append("Bagagem/vendedores só existem para busca só de ida (no pacote o Google exige "
-                                    "escolher a volta antes); use a comparação por trecho.")
+            if need_booking:
+                with self._t("compra"):
+                    self._booking_phase(page, data["cards"], need_booking, warnings)
+            elif booking_top and spec.trip_type != "one_way":
+                warnings.append("Bagagem/vendedores só existem para busca só de ida (no pacote o Google exige "
+                                "escolher a volta antes); use a comparação por trecho.")
             offers, no_price, unreadable = parse_cards(data["cards"], spec)
             if data["cards"] and not offers:
                 raise ScrapeError(
                     f"Achei {len(data['cards'])} cards mas não consegui ler nenhum: o layout do Google "
                     "provavelmente mudou. Rode com --debug e veja data/debug/."
                 )
+            # Carimba o que foi lido agora e copia adiante o que já se sabia (bagagem, aeronave... sem preços de vendedor).
+            detailed = {self._card_key(c, spec) for c in data["cards"] if c.get("detail")}
+            booked = {self._card_key(c, spec) for c in data["cards"] if c.get("booking")}
+            for o in offers:
+                k = f"{o.flight_numbers}|{o.dep_time or ''}" if o.flight_numbers else None
+                carry_forward(o, known.get(k, {}) if k else {}, now, k in detailed, k in booked)
             return ScrapeResult(
                 offers=offers, url=url, price_level=data["price_level"] or insight.get("level"),
                 typical_low=insight.get("typical_low"), typical_high=insight.get("typical_high"),
@@ -256,10 +340,11 @@ class FlightScraper:
             page.close()
 
     # ------------------------------------------------------------------
-    def _booking_phase(self, page, cards: list, top: int, warnings: list) -> None:
-        """Abre a tela de compra dos `top` voos mais baratos e guarda o resultado em card["booking"]."""
-        price = lambda a: float((re.match(r"From\s+([\d.,]+)", a or "") or [0, "inf"])[1].replace(",", ""))
-        ordered = sorted({c["aria"]: c for c in cards}.values(), key=lambda c: price(c["aria"]))[:top]
+    def _booking_phase(self, page, cards: list, arias: list, warnings: list) -> None:
+        """Abre a tela de compra dos voos indicados (`arias`, do mais barato ao mais caro) e guarda o resultado em
+        card["booking"]. Os que já têm compra recente no banco nem entram aqui (ver `plan_detail_needs`)."""
+        by_aria = {c["aria"]: c for c in cards}
+        ordered = [by_aria[a] for a in arias if a in by_aria]
         for card in ordered:
             try:
                 booking = self._open_booking(page, card["aria"])

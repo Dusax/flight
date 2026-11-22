@@ -1,6 +1,7 @@
 import { send, methodNotAllowed, readJson } from "./_lib/http.js";
 import { requireAuth, checkWrite } from "./_lib/auth.js";
 import { gh, upstreamError, defaultBranch, WORKFLOW_FILE } from "./_lib/github.js";
+import { queueRequest } from "./_lib/requests.js";
 
 // Dispara a coleta (todas as buscas ativas, ou só as ids informadas).
 export default async function handler(req, res) {
@@ -17,9 +18,12 @@ export default async function handler(req, res) {
   }
   const ref = await defaultBranch(cfg, cfg.codeRepo);
   if (!ref) return send(res, 502, { error: "Não encontrei o repositório do código (confira CODE_REPO e o token)." });
+  // O GitHub só guarda uma execução pendente (a mais nova cancela a anterior): os ids também vão para requests.json
+  // no repositório de dados, e a execução que sobreviver atende todos os pedidos acumulados.
+  const queued = await queueRequest(cfg, ids);
   const r = await gh(cfg, `/repos/${cfg.codeRepo}/actions/workflows/${WORKFLOW_FILE}/dispatches`, {
     method: "POST", body: { ref, inputs: { ids: ids.join(",") } },
   });
   if (!r.ok) return upstreamError(res, r, "disparar a coleta (o token precisa de Actions: Read and write)");
-  send(res, 200, { ok: true });
+  send(res, 200, { ok: true, queued });
 }

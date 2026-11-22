@@ -271,3 +271,34 @@ def test_consulta_pontual_nao_entra_no_agendamento_nem_no_buscar_agora_geral(tmp
     assert cli.main(["--db", dbp, "run", "2"]) == 0 and asked == ["FCO"]                 # pelo id: a pontual roda
     dash = {x["id"]: x for x in db.build_dashboard(db.connect(dbp))["watches"]}
     assert dash[2]["once"] is True and dash[1]["once"] is False
+
+
+def test_resumo_da_ultima_coleta_agrupa_pela_execucao_e_nao_por_janela_de_tempo(tmp_path):
+    """Coleta longa (mais de 30 min): a falha do começo continua contando, porque o resumo agrupa por run_tag."""
+    conn = db.connect(tmp_path / "r.db")
+    spec = SearchSpec("GRU", "LIS", date.today() + timedelta(days=60))
+    wid = db.add_watch(conn, spec)
+    ok = ScrapeResult([offer(1000)], "https://www.google.com/x", "typical")
+    db.save_search(conn, spec, error="captcha", status="blocked", watch_id=wid, run_tag="run-1")
+    for _ in range(3):
+        db.save_search(conn, spec, ok, watch_id=wid, run_tag="run-1")
+    conn.execute("UPDATE searches SET scraped_at = '2020-01-01T00:00:00Z' WHERE id = 1")   # 1ª consulta há muito tempo
+    conn.commit()
+    a = db._last_attempt(conn, wid)
+    assert (a["failed"], a["total"], a["status"]) == (1, 4, "blocked")
+    db.save_search(conn, spec, ok, watch_id=wid, run_tag="run-2")                         # execução nova: o resumo recomeça
+    a = db._last_attempt(conn, wid)
+    assert (a["failed"], a["total"]) == (0, 1)
+
+
+def test_run_tag_vem_do_ambiente_e_linhas_antigas_usam_a_janela(tmp_path, monkeypatch):
+    conn = db.connect(tmp_path / "t.db")
+    spec = SearchSpec("GRU", "LIS", date.today() + timedelta(days=60))
+    wid = db.add_watch(conn, spec)
+    monkeypatch.setenv("FLIGHTS_RUN_ID", "98765")
+    sid = db.save_search(conn, spec, ScrapeResult([offer(1000)], "u", "typical"), watch_id=wid)
+    assert conn.execute("SELECT run_tag FROM searches WHERE id = ?", (sid,)).fetchone()[0] == "98765"
+    monkeypatch.delenv("FLIGHTS_RUN_ID")
+    sid2 = db.save_search(conn, spec, ScrapeResult([offer(1000)], "u", "typical"), watch_id=wid)
+    assert conn.execute("SELECT run_tag FROM searches WHERE id = ?", (sid2,)).fetchone()[0] is None
+    assert db._last_attempt(conn, wid)["total"] == 2                                     # última sem run_tag: cai na janela de 30 min (pega as duas)
