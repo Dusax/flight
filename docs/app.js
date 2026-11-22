@@ -49,6 +49,7 @@ const state = {
   stale: false,           // a Vercel já publicou uma versão mais nova que a desta aba?
   sel: {},                // combinação de datas selecionada por busca
   datesAll: {},           // por busca: mostrar todas as datas na aba Datas (padrão: as mais baratas)
+  track: {},              // por busca, o voo da aba "Voos acompanhados": { ci: combinação de datas, key: número|saída, q: filtro digitado }
   open: new Set(),        // cards com a tabela de voos aberta
   sort: {},               // ordenação da tabela de voos por busca
   sortSummary: "price",
@@ -394,17 +395,18 @@ function renderList(ws) {
 }
 
 /* ---- detalhe da viagem ---- */
-const TABS = [["resumo", "Resumo"], ["voos", "Voos"], ["datas", "Datas"], ["historico", "Histórico"], ["comparar", "Comparação"], ["busca", "Configuração"]];
+const TABS = [["resumo", "Resumo"], ["voos", "Voos"], ["acompanhar", "Voos acompanhados"], ["datas", "Datas"], ["historico", "Histórico"], ["comparar", "Comparação"], ["busca", "Configuração"]];
 
 function renderTrip(w, v) {
   const c = w.combos.length ? w.combos[comboIndex(w)] : null;
   const rw = canWrite();
   const hasDates = w.combos.length > 1;
   const hasCmp = w.combos.some((x) => x.separate);
-  const tabs = TABS.filter(([k]) => (k !== "datas" || hasDates) && (k !== "comparar" || hasCmp) && (c || k === "resumo" || k === "busca"));
+  const hasTrack = w.combos.some((x) => x.series && Object.keys(x.series.f || {}).length);
+  const tabs = TABS.filter(([k]) => (k !== "datas" || hasDates) && (k !== "comparar" || hasCmp) && (k !== "acompanhar" || hasTrack) && (c || k === "resumo" || k === "busca"));
   const tab = tabs.some(([k]) => k === v.tab) ? v.tab : "resumo";
-  const count = { voos: c?.offers.length };
-  const pane = { resumo: paneResumo, voos: paneVoos, datas: paneDatas, historico: paneHistorico, comparar: paneComparar, busca: paneBusca }[tab](w, c);
+  const count = { voos: c?.offers.length, acompanhar: state.favs.filter((f) => f.watch_id === w.id).length };
+  const pane = { resumo: paneResumo, voos: paneVoos, acompanhar: paneAcompanhar, datas: paneDatas, historico: paneHistorico, comparar: paneComparar, busca: paneBusca }[tab](w, c);
   $("#view").innerHTML = `<button class="btn ghost crumb" data-nav="/">${icon("left")}Todas as viagens</button>
     <section class="panel trip-head">
       <div class="trip-head-top">
@@ -425,6 +427,7 @@ function renderTrip(w, v) {
     <div role="tabpanel" aria-labelledby="tab-${tab}">${pane}</div>`;
   restoreDetails();
   if (tab === "resumo" || tab === "historico") drawChart(w, c);
+  if (tab === "acompanhar") drawTrack(w);
 }
 
 const noData = (w) => `<div class="panel empty">${icon("clock")}<h2>Sem resultados ainda</h2><p class="muted">${w.pending ? "A primeira coleta ainda não aconteceu." : w.last_status === "empty" ? "O Google não retornou voos para essas datas." : "Ainda não há coleta para mostrar."}
@@ -502,11 +505,12 @@ function paneVoos(w, c) {
       <label>Companhia <select data-flt="airline"><option value="">Todas</option>${airlines.map((a) => `<option ${f.airline === a ? "selected" : ""}>${esc(a)}</option>`).join("")}</select></label>
       <label><input type="checkbox" data-flt="direct" ${f.direct ? "checked" : ""}> Só diretos</label>
       <span class="spacer"></span><span class="muted small">${list.length} voo${list.length === 1 ? "" : "s"} listado${list.length === 1 ? "" : "s"}${c.offers_count > all.length ? ` · ${c.offers_count} encontrados no total` : ""}</span></div>
-    <div class="flights">${shown.length ? shown.map((o, i) => flightRow(w, o, { cheapest: o.price === cheapest, fastest: o.duration_min === fastest, key: `${w.id}-${c.depart_date}-${o.flight_numbers}-${o.dep_time}`, favId: canWrite() ? registerFav(w, c, o) : null })).join("") : `<div class="panel empty"><p class="muted">Nenhum voo com esses filtros.</p></div>`}</div>
+    <div class="flights">${shown.length ? shown.map((o, i) => flightRow(w, o, { cheapest: o.price === cheapest, fastest: o.duration_min === fastest, key: `${w.id}-${c.depart_date}-${o.flight_numbers}-${o.dep_time}`, favId: canWrite() ? registerFav(w, c, o) : null,
+      trackId: c.series?.f?.[window.Series.flightKey(o)] ? `${comboIndex(w)}|${window.Series.flightKey(o)}` : null })).join("") : `<div class="panel empty"><p class="muted">Nenhum voo com esses filtros.</p></div>`}</div>
     ${list.length > f.limit ? `<button class="btn more-btn" data-more="${w.id}">Mostrar mais ${Math.min(12, list.length - f.limit)} voos</button>` : ""}`;
 }
 
-function flightRow(w, o, { cheapest, fastest, key, favId }) {
+function flightRow(w, o, { cheapest, fastest, key, favId, trackId }) {
   const next = dayDiff(o.dep_time, o.arr_time);
   const badges = [];
   if (cheapest) badges.push(`<span class="chip good">${icon("tag")}Mais barato</span>`);
@@ -525,7 +529,7 @@ function flightRow(w, o, { cheapest, fastest, key, favId }) {
       <div class="ta-r"><div class="fl-t num">${fmtTime(o.arr_time)}${next > 0 ? `<span class="nextday">+${next}</span>` : ""}</div><div class="fl-c">${esc(o.destination)}</div></div></div>
     <div class="fl-price"><div class="price num${bigCls(money(o.price, w.currency))}">${money(o.price, w.currency)}</div>${w.adults > 1 ? `<div class="muted small">${money(o.price / w.adults, w.currency)} por adulto</div>` : ""}</div>
   </div>
-  <div class="fl-badges">${badges.join("")}${favId ? starBtn(favId) : ""}</div>${detail ? `<details data-k="${esc(key)}"><summary>${icon("chev")}Detalhes do voo</summary><div class="fl-detail">${detail}</div></details>` : ""}</article>`;
+  <div class="fl-badges">${badges.join("")}<span class="fl-actions">${trackId ? `<button type="button" class="btn sm ghost" data-track="${esc(trackId)}" title="Ver a evolução do preço deste voo">${icon("chart")}Acompanhar</button>` : ""}${favId ? starBtn(favId) : ""}</span></div>${detail ? `<details data-k="${esc(key)}"><summary>${icon("chev")}Detalhes do voo</summary><div class="fl-detail">${detail}</div></details>` : ""}</article>`;
 }
 
 function flightDetail(w, o) {
@@ -550,6 +554,75 @@ function flightDetail(w, o) {
       ${b.bag_policy ? `<div class="bk-row muted small">${esc(b.bag_policy)}</div>` : ""}${link ? `<div class="bk-row">${link}</div>` : ""}</div>`;
   }
   return segs + bk;
+}
+
+/* ---- voos acompanhados: evolução do preço de um voo específico ---- */
+const trkText = (w, x) => `${x.flight_numbers} · ${x.airline} · ${fmtTime(x.dep_time)} → ${fmtTime(x.arr_time)} · ${money(x.price, w.currency)}`;
+function trackSel(w) {
+  const S = window.Series, tr = (state.track[w.id] ||= {});
+  const withS = w.combos.map((x, i) => [x, i]).filter(([x]) => x.series && Object.keys(x.series.f || {}).length);
+  if (!withS.length) return null;
+  const ci = tr.ci != null && withS.some(([, i]) => i === tr.ci) ? tr.ci : (withS.find(([, i]) => i === comboIndex(w)) || withS[0])[1];
+  const c = w.combos[ci], listed = c.offers.filter((x) => c.series.f[S.flightKey(x)]);
+  const favKeys = state.favs.filter((f) => f.watch_id === w.id && comboDates(c).join(",") === f.dates.join(",")).map((f) => S.flightKey(f.offer));
+  const key = tr.key && c.series.f[tr.key] ? tr.key : favKeys.find((k) => c.series.f[k]) || (listed[0] && S.flightKey(listed[0]));
+  return { tr, withS, ci, c, key, listed, o: listed.find((x) => S.flightKey(x) === key) || null };
+}
+function paneAcompanhar(w) {
+  const S = window.Series, sel = trackSel(w);
+  if (!sel || !sel.o) return `<div class="panel empty">${icon("chart")}<h2>Sem histórico por voo ainda</h2><p class="muted">Depois da próxima coleta, os voos de cada data passam a ter a evolução do preço.</p></div>`;
+  const { tr, withS, ci, c, key, listed, o } = sel, cur = w.currency;
+  const pts = S.flightPoints(c, key), st = S.flightStats(pts), q = (tr.q || "").trim().toLowerCase();
+  const favsHere = state.favs.filter((f) => f.watch_id === w.id);
+  const chips = favsHere.map((f) => {
+    const i = w.combos.findIndex((x) => comboDates(x).join(",") === f.dates.join(",")), k = S.flightKey(f.offer), ok = i >= 0 && w.combos[i].series?.f?.[k];
+    return `<button type="button" class="chip trk-chip${ok && i === ci && k === key ? " on" : ""}" ${ok ? `data-track="${i}|${esc(k)}"` : "disabled"} title="${ok ? "Acompanhar este favorito" : "Sem histórico guardado desta data"}">${icon("star")}${esc(f.offer.flight_numbers)} · ${esc(fmtDayShort(f.dates[0]))}</button>`;
+  }).join("");
+  const dateSel = withS.length > 1 ? `<label class="f">Data<select data-track-date>${withS.map(([x, i]) => `<option value="${i}" ${i === ci ? "selected" : ""}>${esc(dateSpan(x))} · ${esc(money(x.min_price, cur))}</option>`).join("")}</select></label>` : "";
+  const opts = listed.map((x) => { const k = S.flightKey(x), t = trkText(w, x); return `<option value="${esc(k)}" ${k === key ? "selected" : ""} ${q && k !== key && !t.toLowerCase().includes(q) ? "hidden" : ""}>${esc(t)}</option>`; }).join("");
+  const tile = (k, v, sub) => `<div class="panel stat"><div class="stat-k">${k}</div><div class="stat-v num">${v}</div><div class="stat-s price-d">${sub || ""}</div></div>`;
+  const stats = st ? `<div class="stats trk-stats">
+      ${tile(`${icon("tag")}Preço atual`, money(st.current, cur), st.sincePrev != null ? deltaHtml(st.current, st.current - st.sincePrev, cur, "vs. coleta anterior") : "Só uma coleta até agora")}
+      ${tile(`${icon("down")}Menor já visto`, money(st.min, cur), esc(fmtStamp(st.minAt)))}
+      ${tile(`${icon("up")}Maior já visto`, money(st.max, cur), esc(fmtStamp(st.maxAt)))}
+      ${tile(`${icon("clock")}Primeira coleta`, money(st.first, cur), st.sinceFirst != null ? `${esc(fmtStamp(st.firstAt))} · ${deltaHtml(st.current, st.first, cur, "desde então")}` : esc(fmtStamp(st.firstAt)))}
+      ${tile(`${icon("check")}Apareceu em`, `${st.seen} de ${st.total}`, "coletas desta data")}</div>` : "";
+  const gone = st && !st.inLatest ? `<div class="banner">${icon("alert")}<div><b>Este voo não apareceu na última coleta.</b><div class="muted small">Visto pela última vez ${esc(ago(st.lastSeenAt))} (${esc(fmtStamp(st.lastSeenAt))}). Pode ter esgotado ou saído dos 30 voos mais baratos que o painel guarda.</div></div></div>` : "";
+  const rows = S.tableRows(pts).slice(0, 60).map((r) => `<tr><td>${esc(fmtStamp(r.ts))}</td><td class="r num">${r.absent ? `<span class="muted">não apareceu</span>` : `<b>${money(r.p, cur)}</b>`}</td>
+      <td class="r num">${r.delta == null ? "–" : r.delta === 0 ? `<span class="flat">igual</span>` : `<span class="${r.delta < 0 ? "down" : "up"}">${r.delta < 0 ? "−" : "+"}${money(Math.abs(r.delta), cur)}</span>`}</td>
+      <td class="r num muted">${r.min == null ? "–" : money(r.min, cur)}</td></tr>`).join("");
+  const od = S.otherDates(w.combos, o);
+  const other = od.length > 1 ? `<div class="section-title">Mesmo voo em outras datas <span class="count">${od.length}</span></div>
+    <p class="muted small">O mesmo número e horário de saída em cada data comparada (preço da última coleta de cada uma).</p>
+    <section class="panel tablewrap"><table><thead><tr><th>Data</th><th class="r">Preço</th><th class="r">vs. esta data</th><th></th></tr></thead><tbody>${od.map((x) => {
+      const here = x.here, d = x.price - o.price, lo = Math.min(...od.map((y) => y.price)), k2 = `${o.flight_numbers}|${x.dep_time || ""}`, has = w.combos[x.index].series?.f?.[k2];
+      return `<tr${here ? ` class="trk-here"` : ""}><td>${esc(weekday(x.depart_date))}, ${esc(fmtDayShort(x.depart_date))}${here ? ` <span class="chip">esta data</span>` : ""}${x.price === lo ? ` <span class="chip good">mais barata</span>` : ""}</td>
+        <td class="r num"><b>${money(x.price, cur)}</b></td><td class="r num">${here ? "–" : d === 0 ? `<span class="flat">igual</span>` : `<span class="${d < 0 ? "down" : "up"}">${d < 0 ? "−" : "+"}${money(Math.abs(d), cur)}</span>`}</td>
+        <td class="r">${here || !has ? "" : `<button class="btn sm" data-track="${x.index}|${esc(k2)}">${icon("chart")}Acompanhar</button>`}</td></tr>`; }).join("")}</tbody></table></section>` : "";
+  return `<p class="muted">Escolha um voo para ver como o preço dele mudou a cada coleta. Cada voo é reconhecido pelo número e horário de saída.</p>
+    ${chips ? `<div class="trk-chips" aria-label="Seus favoritos nesta viagem">${chips}</div>` : ""}
+    <div class="trk-sel">${dateSel}
+      <label class="f">Buscar voo<input type="search" data-track-q value="${esc(tr.q || "")}" placeholder="Número ou companhia (ex.: LA 8084)" autocomplete="off"></label>
+      <label class="f trk-pick">Voo<select data-track-flight>${opts}</select></label></div>
+    ${flightRow(w, o, { key: `trk-${key}`, favId: canWrite() ? registerFav(w, c, o) : null })}
+    ${gone}${stats}
+    <section class="panel panel-pad"><div class="trk-legend"><span><i class="lg lg-line"></i>Preço deste voo</span><span><i class="lg lg-min"></i>Menor preço da data</span><span><i class="lg lg-gap"></i>Não apareceu na coleta</span></div>
+      <div class="chart-box" id="trk-chart"></div></section>
+    <div class="section-title">Coletas <span class="count">${pts.length}</span></div>
+    <section class="panel tablewrap"><table><thead><tr><th>Quando</th><th class="r">Preço do voo</th><th class="r">Variação</th><th class="r">Menor da data</th></tr></thead><tbody>${rows}</tbody></table></section>
+    ${other}`;
+}
+function drawTrack(w) {
+  const box = document.getElementById("trk-chart"), sel = trackSel(w); if (!box || !sel?.o) return;
+  const S = window.Series, pts = S.flightPoints(sel.c, sel.key), cur = w.currency;
+  drawSeries(box, pts, { cur, minLine: true, aria: (a, b) => `Preço do voo ${sel.o.flight_numbers}, de ${money(a.p, cur)} a ${money(b.p, cur)}`,
+    empty: (present) => `O gráfico aparece a partir da 2ª coleta em que o voo for visto.${present[0] ? ` Preço até agora: <b>${money(present[0].p, cur)}</b>.` : ""}` });
+}
+function openTrack(wid, ci, key) {
+  state.track[wid] = { ...(state.track[wid] || {}), ci, key };
+  const target = `#/viagem/${wid}/acompanhar`;
+  if (location.hash === target) render(); else go(`/viagem/${wid}/acompanhar`);
+  window.scrollTo(0, 0);
 }
 
 /* ---- datas ---- */
@@ -595,45 +668,60 @@ function paneHistorico(w, c) {
     <section class="panel tablewrap"><table><thead><tr><th>Quando</th><th class="r">Menor preço</th><th class="r">Variação</th></tr></thead><tbody>${rows}</tbody></table></section>`;
 }
 
-function drawChart(w, c) {
-  const box = document.getElementById(`chart-${w.id}`); if (!box || !c) return;
-  const pts = c.history.map(([t, p]) => ({ t: new Date(t).getTime(), p, ts: t })).sort((a, b) => a.t - b.t);
-  if (pts.length < 2) { box.innerHTML = `<div class="empty-chart">O gráfico aparece a partir da 2ª coleta.${pts[0] ? ` Menor preço até agora: <b>${money(pts[0].p, w.currency)}</b>.` : ""}</div>`; return; }
-  const W = Math.max(320, box.clientWidth || 640), H = 210, m = { l: 62, r: 70, t: 14, b: 28 };
-  const lo = Math.min(...pts.map((q) => q.p)), hi = Math.max(...pts.map((q) => q.p));
+/* Gráfico de linha de preço por coleta. pts = [{t, ts, p, min?}]; p = null quando o voo não apareceu naquela coleta (lacuna).
+   o: { cur, aria, empty(present) -> html, minLine } — minLine desenha o menor preço da data (pontilhado) para comparação. */
+function drawSeries(box, pts, o) {
+  const present = pts.filter((q) => q.p != null);
+  if (present.length < 2) { box.innerHTML = `<div class="empty-chart">${o.empty(present)}</div>`; return; }
+  const W = Math.max(320, box.clientWidth || 640), H = 220, m = { l: 62, r: 70, t: 14, b: 30 };
+  const vals = [...present.map((q) => q.p), ...(o.minLine ? pts.map((q) => q.min).filter((v) => v != null) : [])];
+  const lo = Math.min(...vals), hi = Math.max(...vals);
   const pad = (hi - lo) * 0.18 || hi * 0.05 || 1;
   const y0 = Math.max(0, lo - pad), y1 = hi + pad, t0 = pts[0].t, t1 = pts[pts.length - 1].t;
   const X = (t) => m.l + ((t - t0) / (t1 - t0 || 1)) * (W - m.l - m.r);
   const Y = (p) => m.t + (1 - (p - y0) / (y1 - y0)) * (H - m.t - m.b);
   const ticks = [0, 1, 2, 3].map((i) => y0 + ((y1 - y0) * i) / 3);
-  const line = pts.map((q, i) => `${i ? "L" : "M"}${X(q.t).toFixed(1)},${Y(q.p).toFixed(1)}`).join("");
-  const area = `${line}L${X(t1).toFixed(1)},${H - m.b}L${X(t0).toFixed(1)},${H - m.b}Z`;
-  const last = pts[pts.length - 1];
+  const f1 = (n) => n.toFixed(1);
+  let line = "", pen = false, gaps = false;
+  for (const q of pts) { if (q.p == null) { pen = false; gaps = true; continue; } line += `${pen ? "L" : "M"}${f1(X(q.t))},${f1(Y(q.p))}`; pen = true; }
+  const area = gaps ? "" : `${line}L${f1(X(t1))},${H - m.b}L${f1(X(t0))},${H - m.b}Z`;
+  const minPath = o.minLine ? pts.filter((q) => q.min != null).map((q, i) => `${i ? "L" : "M"}${f1(X(q.t))},${f1(Y(q.min))}`).join("") : "";
+  const last = present[present.length - 1];
+  const dots = present.length <= 70 ? present.map((q) => `<circle class="dot" cx="${f1(X(q.t))}" cy="${f1(Y(q.p))}" r="2.6"/>`).join("") : "";
+  const gapMarks = pts.filter((q) => q.p == null).map((q) => `<line class="gapmark" x1="${f1(X(q.t))}" x2="${f1(X(q.t))}" y1="${H - m.b - 7}" y2="${H - m.b}"/>`).join("");
   const dayLbl = (t) => new Date(t).toLocaleDateString("pt-BR", { day: "numeric", month: "short" }).replace(/\./g, "");
-  box.innerHTML = `<svg class="chart" viewBox="0 0 ${W} ${H}" role="img" aria-label="Menor preço por coleta, de ${esc(money(pts[0].p, w.currency))} a ${esc(money(last.p, w.currency))}" tabindex="0">
-    ${ticks.map((v) => `<line class="grid" x1="${m.l}" x2="${W - m.r}" y1="${Y(v).toFixed(1)}" y2="${Y(v).toFixed(1)}"/><text x="${m.l - 8}" y="${(Y(v) + 4).toFixed(1)}" text-anchor="end">${esc(money(v, w.currency))}</text>`).join("")}
+  box.innerHTML = `<svg class="chart" viewBox="0 0 ${W} ${H}" role="img" aria-label="${esc(o.aria(present[0], last))}" tabindex="0">
+    ${ticks.map((v) => `<line class="grid" x1="${m.l}" x2="${W - m.r}" y1="${f1(Y(v))}" y2="${f1(Y(v))}"/><text x="${m.l - 8}" y="${f1(Y(v) + 4)}" text-anchor="end">${esc(money(v, o.cur))}</text>`).join("")}
     <line class="axis" x1="${m.l}" x2="${W - m.r}" y1="${H - m.b}" y2="${H - m.b}"/>
     <text x="${m.l}" y="${H - 8}" text-anchor="start">${esc(dayLbl(t0))}</text><text x="${W - m.r}" y="${H - 8}" text-anchor="end">${esc(dayLbl(t1))}</text>
-    <path class="area" d="${area}"/><path class="line" d="${line}"/>
-    <circle class="pt" cx="${X(last.t).toFixed(1)}" cy="${Y(last.p).toFixed(1)}" r="5"/>
-    <text class="end" x="${(X(last.t) + 10).toFixed(1)}" y="${(Y(last.p) + 4).toFixed(1)}">${esc(money(last.p, w.currency))}</text>
+    ${area ? `<path class="area" d="${area}"/>` : ""}${minPath ? `<path class="minline" d="${minPath}"/>` : ""}<path class="line" d="${line}"/>${dots}${gapMarks}
+    <circle class="pt" cx="${f1(X(last.t))}" cy="${f1(Y(last.p))}" r="5"/>
+    <text class="end" x="${f1(X(last.t) + 10)}" y="${f1(Y(last.p) + 4)}">${esc(money(last.p, o.cur))}</text>
     <g class="hov" hidden><line class="cross" y1="${m.t}" y2="${H - m.b}"/><circle class="pt" r="5"/></g>
     <rect x="${m.l}" y="0" width="${W - m.l - m.r}" height="${H}" fill="transparent"/></svg><div class="tip" hidden></div>`;
   const svg = box.querySelector("svg"), tip = box.querySelector(".tip"), hov = svg.querySelector(".hov");
   const show = (clientX) => {
     const r = svg.getBoundingClientRect(); const x = ((clientX - r.left) / r.width) * W;
     let best = 0; pts.forEach((q, i) => { if (Math.abs(X(q.t) - x) < Math.abs(X(pts[best].t) - x)) best = i; });
-    const q = pts[best], prev = pts[best - 1], px = X(q.t), py = Y(q.p);
+    const q = pts[best], px = X(q.t), py = q.p == null ? H - m.b : Y(q.p);
+    const prev = pts.slice(0, best).reverse().find((z) => z.p != null);
     hov.removeAttribute("hidden"); hov.querySelector("line").setAttribute("x1", px); hov.querySelector("line").setAttribute("x2", px);
     hov.querySelector("circle").setAttribute("cx", px); hov.querySelector("circle").setAttribute("cy", py);
-    const dd = prev ? q.p - prev.p : null;
-    tip.innerHTML = `<b class="num">${esc(money(q.p, w.currency))}</b>${esc(fmtStamp(q.ts))}${dd ? `<br><span class="${dd < 0 ? "down" : "up"}">${dd < 0 ? "−" : "+"}${esc(money(Math.abs(dd), w.currency))}</span>` : ""}`;
+    const dd = q.p != null && prev ? q.p - prev.p : null;
+    tip.innerHTML = q.p == null ? `<b>não apareceu</b>${esc(fmtStamp(q.ts))}${q.min != null && o.minLine ? `<br><span class="muted">menor da data ${esc(money(q.min, o.cur))}</span>` : ""}`
+      : `<b class="num">${esc(money(q.p, o.cur))}</b>${esc(fmtStamp(q.ts))}${dd ? `<br><span class="${dd < 0 ? "down" : "up"}">${dd < 0 ? "−" : "+"}${esc(money(Math.abs(dd), o.cur))}</span>` : ""}${q.min != null && o.minLine ? `<br><span class="muted">menor da data ${esc(money(q.min, o.cur))}</span>` : ""}`;
     tip.hidden = false; tip.style.left = `${Math.min(Math.max((px / W) * r.width, 64), r.width - 64)}px`; tip.style.top = `${(py / H) * r.height - 12}px`;
   };
   const hide = () => { hov.setAttribute("hidden", ""); tip.hidden = true; };
   svg.addEventListener("pointermove", (e) => show(e.clientX)); svg.addEventListener("pointerleave", hide); svg.addEventListener("pointerdown", (e) => show(e.clientX));
 }
-let rzT; window.addEventListener("resize", () => { clearTimeout(rzT); rzT = setTimeout(() => { const v = state.view; if (v.type !== "trip") return; const w = merged().find((x) => x.id === v.id); if (w && w.combos.length && ["resumo", "historico"].includes(v.tab || "resumo")) drawChart(w, w.combos[comboIndex(w)]); }, 150); });
+function drawChart(w, c) {
+  const box = document.getElementById(`chart-${w.id}`); if (!box || !c) return;
+  const pts = c.history.map(([ts, p]) => ({ t: new Date(ts).getTime(), ts, p })).sort((a, b) => a.t - b.t);
+  drawSeries(box, pts, { cur: w.currency, aria: (a, b) => `Menor preço por coleta, de ${money(a.p, w.currency)} a ${money(b.p, w.currency)}`,
+    empty: (present) => `O gráfico aparece a partir da 2ª coleta.${present[0] ? ` Menor preço até agora: <b>${money(present[0].p, w.currency)}</b>.` : ""}` });
+}
+let rzT; window.addEventListener("resize", () => { clearTimeout(rzT); rzT = setTimeout(() => { const v = state.view; if (v.type !== "trip") return; const w = merged().find((x) => x.id === v.id); if (w && w.combos.length && ["resumo", "historico"].includes(v.tab || "resumo")) drawChart(w, w.combos[comboIndex(w)]); else if (w && v.tab === "acompanhar") drawTrack(w); }, 150); });
 
 /* ---- comparação ---- */
 function paneComparar(w, c) {
@@ -760,7 +848,7 @@ function favCard(f, ws) {
     <div class="fav-head"><div class="fav-t"><div class="fav-route">${esc(cityLine(trip))}</div>
         <div class="muted small">${esc(favDatesText(f))} · salvo em ${esc(fmtStamp(f.saved_at))}</div></div>
       ${spark(i.history)}
-      <div class="fav-acts">${i.w ? `<button class="btn sm" data-favopen="${esc(f.id)}">Ver na viagem${icon("chev")}</button>` : ""}</div>
+      <div class="fav-acts">${i.w && i.combo?.series?.f?.[window.Series.flightKey(f.offer)] ? `<button class="btn sm" data-favtrack="${esc(f.id)}">${icon("chart")}Evolução</button>` : ""}${i.w ? `<button class="btn sm" data-favopen="${esc(f.id)}">Ver na viagem${icon("chev")}</button>` : ""}</div>
       <div class="chips fav-chips">${chips.join("")}</div>
       <div class="fav-price"><span class="muted small">Preço quando salvou${pkg}:</span> <b class="num">${money(f.price, cur)}</b>${delta ? ` <span class="price-d">${delta}</span>` : ""}</div></div>
     ${flightRow({ currency: cur, adults: f.trip.adults }, o, { key: `fav-${f.id}`, favId: f.id })}</section>`;
@@ -794,7 +882,13 @@ window.addEventListener("hashchange", () => {
 });
 
 document.addEventListener("click", (e) => {
-  const t = e.target.closest("[data-act],[data-tab],[data-combo],[data-nav],[data-open-trip],[data-open],[data-more],[data-fav],[data-favopen],[data-undo-fav],[data-dates-all]"); if (!t) return;
+  const t = e.target.closest("[data-act],[data-tab],[data-combo],[data-nav],[data-open-trip],[data-open],[data-more],[data-fav],[data-favopen],[data-undo-fav],[data-dates-all],[data-track],[data-favtrack]"); if (!t) return;
+  if (t.dataset.track != null && t.dataset.track !== "") { const [ci, ...k] = t.dataset.track.split("|"); return openTrack(state.view.id, +ci, k.join("|")); }
+  if (t.dataset.favtrack) {
+    const f = state.favs.find((x) => x.id === t.dataset.favtrack), w = f && merged().find((x) => x.id === f.watch_id); if (!w) return;
+    const ci = w.combos.findIndex((c) => comboDates(c).join(",") === f.dates.join(",")); if (ci < 0) return;
+    return openTrack(w.id, ci, window.Series.flightKey(f.offer));
+  }
   if (t.dataset.datesAll) { const k = +t.dataset.datesAll; state.datesAll[k] = !state.datesAll[k]; return render(); }
   if (t.dataset.fav) { e.preventDefault(); return void guard(() => toggleFav(t.dataset.fav)); }
   if (t.dataset.favopen) {
@@ -839,7 +933,28 @@ document.addEventListener("click", (e) => {
     }, "Viagem removida.");
   }
 });
+document.addEventListener("input", (e) => {   // filtro de voo na aba "Voos acompanhados": só esconde opções, sem redesenhar
+  const q = e.target.closest("[data-track-q]"); if (!q || state.view.type !== "trip") return;
+  const tr = (state.track[state.view.id] ||= {}); tr.q = q.value;
+  const sel = document.querySelector("[data-track-flight]"), term = q.value.trim().toLowerCase();
+  if (sel) [...sel.options].forEach((op) => { op.hidden = !!term && !op.selected && !op.textContent.toLowerCase().includes(term); });
+});
+document.addEventListener("keydown", (e) => {
+  if (e.key !== "Enter" || !e.target.matches?.("[data-track-q]")) return;
+  e.preventDefault(); const sel = document.querySelector("[data-track-flight]"), term = e.target.value.trim().toLowerCase();
+  const first = sel && [...sel.options].find((op) => !term || op.textContent.toLowerCase().includes(term));
+  if (first) { (state.track[state.view.id] ||= {}).key = first.value; render(); }
+});
 document.addEventListener("change", (e) => {
+  const td = e.target.closest("[data-track-date]");
+  if (td && state.view.type === "trip") {
+    const w = merged().find((x) => x.id === state.view.id), tr = (state.track[state.view.id] ||= {}), old = trackSel(w), S = window.Series;
+    const ci = +td.value, hh = (old?.o?.dep_time || "").slice(11, 16);
+    const same = w.combos[ci].offers.find((x) => x.flight_numbers === old?.o?.flight_numbers && (x.dep_time || "").slice(11, 16) === hh);
+    state.track[state.view.id] = { ...tr, ci, key: same ? S.flightKey(same) : undefined }; return render();
+  }
+  const tf = e.target.closest("[data-track-flight]");
+  if (tf && state.view.type === "trip") { (state.track[state.view.id] ||= {}).key = tf.value; return render(); }
   const fs = e.target.closest("[data-favsort]"); if (fs) { state.favSort = fs.value; return render(); }
   const t = e.target.closest("[data-flt]"); if (!t || state.view.type !== "trip") return;
   const f = fltState({ id: state.view.id });

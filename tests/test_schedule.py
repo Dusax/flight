@@ -122,7 +122,7 @@ def test_pausada_e_sem_cron_nao_mudam(tmp_path):
     conn = db.connect(tmp_path / "p.db")
     db.sync_watches(conn, [item(1, schedule="0 * * * *", active=False), item(2, every_hours=24), item(3)])
     assert not db.is_due(conn, watch(conn, 1), utc(2026, 11, 22, 1, 7))        # pausada
-    assert db.is_due(conn, watch(conn, 2), utc(2026, 11, 22, 1, 7))            # a cada 24 h, nunca coletou: vence
+    assert db.is_due(conn, watch(conn, 2), datetime.now(timezone.utc) + timedelta(minutes=1))   # a cada 24 h, nunca coletou: vence
     assert not db.is_due(conn, watch(conn, 3), utc(2026, 11, 22, 1, 7))        # só manual
 
 

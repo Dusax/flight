@@ -20,6 +20,17 @@ frequência de cada uma pelo próprio painel e pode disparar uma coleta na hora.
 - **Comparar separado:** além do pacote, consulta cada trecho como só ida e soma os
   mais baratos. O painel diz se o pacote ou o separado compensa, e quanto. Vale para
   ida e volta e multi-destino. Passagens separadas não têm proteção de conexão.
+- **Voos acompanhados (evolução de um voo):** a aba **Voos acompanhados** de cada viagem mostra o preço de **um voo
+  específico** a cada coleta. Escolha a data e o voo pelo número, companhia ou horário (campo de busca: “LA 8084”);
+  os seus favoritos da viagem aparecem como atalhos. Mostra preço atual (e variação desde a coleta anterior), menor e
+  maior já vistos com a data, primeira coleta e variação desde então, em quantas coletas o voo apareceu, o gráfico
+  (com o menor preço da data pontilhado para comparar e marcas onde o voo não apareceu) e a tabela de coletas
+  (quando foi cada busca, preço, subiu/desceu). Embaixo, **o mesmo voo em outras datas** do período, com a mais barata
+  destacada. Também abre pelo botão **Acompanhar** de cada voo na aba Voos e por **Evolução** nos Favoritos. O voo é
+  reconhecido por número + horário de saída (que inclui o dia); o histórico vem do banco, então já nasce com o passado.
+  Limites: só as 20 datas mais baratas de um período grande têm a lista de voos (e a série), e o banco guarda os 30 voos
+  mais baratos de cada coleta: se um voo sair dessa lista, aparece “não apareceu”. O JSON do painel guarda até 90
+  coletas por voo e reduz sozinho (45, 20) se passar de ~3 MB.
 - **Versão do painel:** o rodapé mostra a versão (commit) em que a aba está rodando; a cada 5 minutos e quando você volta
   para a aba, o painel confere se a Vercel publicou algo novo e mostra “Há uma nova versão do painel” com o botão
   **Recarregar**. Se uma funcionalidade nova não aparece: confira a versão no rodapé com o último commit da branch,

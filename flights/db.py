@@ -518,6 +518,32 @@ HISTORY_POINTS = 240   # pontos de histórico por combinação de datas
 OFFERS_PER_COMBO = 30  # voos exibidos por combinação de datas
 DETAILED_COMBOS = 20   # só as N combinações mais baratas levam a lista de voos (períodos grandes gerariam MBs)
 TRIM_HISTORY = 30      # pontos de histórico das demais
+SERIES_POINTS = 90     # coletas por voo na evolução de preço de cada voo (cada combinação detalhada)
+
+
+def flight_key(flight_numbers, dep_time) -> str:
+    """Identifica um voo numa data: número do voo + horário de saída (que inclui o dia)."""
+    return f"{flight_numbers}|{dep_time or ''}"
+
+
+def build_flight_series(conn, rows, offers, points: int = SERIES_POINTS) -> Optional[dict]:
+    """Preço de cada voo da lista atual a cada coleta da combinação: arrays alinhados às coletas (`null` = o voo
+    não apareceu naquela coleta, por ter esgotado ou saído dos mais baratos que o banco guarda)."""
+    rows = rows[-points:]
+    keys = {flight_key(o.get("flight_numbers"), o.get("dep_time")) for o in offers if o.get("flight_numbers")}
+    if not rows or not keys:
+        return None
+    ids = [r["id"] for r in rows]
+    where = {sid: i for i, sid in enumerate(ids)}
+    series = {k: [None] * len(rows) for k in keys}
+    q = ("SELECT search_id, flight_numbers, dep_time, MIN(price) AS p FROM offers WHERE search_id IN (%s) "
+         "AND flight_numbers IS NOT NULL GROUP BY search_id, flight_numbers, dep_time" % ",".join("?" * len(ids)))
+    num = lambda v: int(v) if v is not None and v == int(v) else v   # preços inteiros ocupam menos no JSON
+    for r in conn.execute(q, ids):
+        k = flight_key(r["flight_numbers"], r["dep_time"])
+        if k in series:
+            series[k][where[r["search_id"]]] = num(r["p"])
+    return {"t": [r["scraped_at"] for r in rows], "min": [num(r["min_price"]) for r in rows], "f": series}
 OFFERS_PER_LEG = 10    # voos exibidos por trecho na comparação "separado"
 
 _OFFER_COLS = """price, airline, operated_by, flight_numbers, origin, destination, dep_time, arr_time, duration_min,
@@ -641,7 +667,7 @@ def build_favorites(conn, favs) -> Dict[str, dict]:
     return out
 
 
-def build_dashboard(conn, today: Optional[date] = None, favorites=None) -> Dict:
+def build_dashboard(conn, today: Optional[date] = None, favorites=None, series_points: int = SERIES_POINTS) -> Dict:
     """Tudo que a página precisa, num JSON só. Só entra o que está em `watches` e bate com a
     configuração atual da busca (se você editar as datas, as coletas antigas deixam de aparecer)."""
     today = today or date.today()
@@ -651,7 +677,7 @@ def build_dashboard(conn, today: Optional[date] = None, favorites=None) -> Dict:
         last = last_run_at(conn, w["id"])
         last_attempt = _last_attempt(conn, w["id"])
         compare = bool(w["compare_separate"])
-        combos = []
+        combos, rows_of = [], {}
         ends = watch_ends(w)
         for trip in watch_plan(w, today):
             if trip.leg_index is not None:
@@ -679,11 +705,15 @@ def build_dashboard(conn, today: Optional[date] = None, favorites=None) -> Dict:
                 "offers": _offers_for(conn, cur["id"], OFFERS_PER_COMBO),
                 "separate": _separate(conn, w["id"], trip, cur["min_price"]) if compare and len(trip.all_legs()) > 1 else None,
             })
+            rows_of[id(combos[-1])] = rows
         if len(combos) > DETAILED_COMBOS:   # período grande: o JSON só carrega os voos das mais baratas
             keep = {id(c) for c in sorted(combos, key=lambda c: c["min_price"])[:DETAILED_COMBOS]}
             for c in combos:
                 if id(c) not in keep:
                     c.update(offers=[], separate=None, offers_trimmed=True, history=c["history"][-TRIM_HISTORY:])
+        for c in combos:   # evolução de preço de cada voo listado (só nas combinações que levam a lista de voos)
+            if c["offers"]:
+                c["series"] = build_flight_series(conn, rows_of[id(c)], c["offers"], series_points)
         plan_all = watch_plan(w, today)
         space = len(combo_dates(spec, ends, today)) if any(ends) else None
         dep_last = ends[0] or spec.depart_date + timedelta(days=w["flex_days"])  # última data de ida possível

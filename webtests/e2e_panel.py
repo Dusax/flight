@@ -318,6 +318,36 @@ try:
         assert pg.locator(".banner:has-text('nova versão')").count() == 0, "depois de recarregar o aviso some"
         print("12g. versão do painel: rodapé e aviso 'Há uma nova versão' com botão Recarregar")
 
+        # ---- voos acompanhados: evolução do preço de um voo específico ----
+        pg.goto(base + "/#/viagem/4/voos"); pg.wait_for_selector(".fl [data-track]")
+        pg.locator(".fl [data-track]").first.click(); pg.wait_for_selector("#trk-chart svg.chart")
+        assert pg.evaluate("location.hash") == "#/viagem/4/acompanhar" and "Voos acompanhados" in pg.inner_text(".tabs")
+        body = pg.inner_text("#view").lower(); assert "preço atual" in body and "menor já visto" in body and "apareceu em" in body and "mesmo voo em outras datas" in body, body[:600]
+        assert pg.locator(".tablewrap").first.locator("tbody tr").count() == 5, "uma linha por coleta"
+        pg.locator("#trk-chart svg.chart").hover(position={"x": 300, "y": 90}); pg.wait_for_selector("#trk-chart .tip:not([hidden])")
+        # o segundo voo tem uma lacuna (não apareceu na 2ª coleta)
+        opts = pg.locator("[data-track-flight] option"); n_opts = opts.count(); assert n_opts >= 3
+        pg.select_option("[data-track-flight]", index=1); pg.wait_for_selector("#trk-chart .gapmark", state="attached")
+        assert "não apareceu" in pg.inner_text(".tablewrap"), "a tabela marca a coleta em que o voo não apareceu"
+        # filtro por número: digitar esconde as outras opções; Enter escolhe a primeira que sobrou
+        pg.fill("[data-track-q]", "AV 1274"); pg.press("[data-track-q]", "Enter"); pg.wait_for_selector("#trk-chart svg.chart")
+        assert "AV 1274" in pg.inner_text(".fl-air"), pg.inner_text(".fl-air")
+        # mesmo voo em outras datas: troca a seleção para outra data
+        pg.fill("[data-track-q]", ""); 
+        od_rows = pg.locator("tr.trk-here"); assert od_rows.count() == 1
+        before = pg.input_value("[data-track-date]")
+        pg.locator("button[data-track]:has-text('Acompanhar')").first.click(); pg.wait_for_selector("#trk-chart svg.chart")
+        assert pg.input_value("[data-track-date]") != before and "AV 1274" in pg.inner_text(".fl-air"), "trocar de data mantém o mesmo voo"
+        pg.select_option("[data-track-date]", before); assert "AV 1274" in pg.inner_text(".fl-air")
+        # favorito vira atalho (chip) e aparece no contador da aba
+        pg.locator(".fl .star").first.click(); pg.wait_for_selector(".trk-chip")
+        assert pg.locator(".tab[data-tab=acompanhar] .chip").inner_text().strip() == "1"
+        # pela aba Favoritos: botão Evolução abre a aba da viagem já com o voo
+        pg.click("#btn-favs"); pg.wait_for_selector(".fav [data-favtrack]"); pg.locator(".fav [data-favtrack]").first.click()
+        pg.wait_for_selector("#trk-chart svg.chart"); assert pg.evaluate("location.hash") == "#/viagem/4/acompanhar"
+        pg.locator(".fl .star").first.click(); pg.wait_for_selector(".trk-chip", state="detached")   # remove o favorito de teste
+        print("12h. voos acompanhados: seleção por número, indicadores, gráfico com lacuna, tabela, outras datas, favoritos")
+
         pg.goto(base + "/#/viagem/1/voos"); pg.wait_for_selector(".fl"); assert not pg.is_visible("#dlg-login")
         print("13. link direto + sessão mantida após recarregar")
         ctx.clear_cookies(); pg.click('[data-nav="/"]'); pg.click('.tcard [data-act=run]')

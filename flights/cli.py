@@ -94,6 +94,7 @@ def expand_flex(spec: SearchSpec, flex: int, compare_separate: bool = False, end
     return plan_specs(spec, flex, compare_separate, ends=ends)
 
 
+MAX_DASHBOARD_BYTES = 3_000_000
 QUIET = False  # --quiet: nada que identifique a busca (rota, datas, preços, mensagens de erro) vai para a tela
 
 
@@ -304,8 +305,13 @@ def cmd_publish(args) -> int:
             favorites = json.loads((out / "favorites.json").read_text(encoding="utf-8"))
         except ValueError:
             print("favorites.json ilegível; favoritos ignorados nesta coleta.")
-    data = db.build_dashboard(conn, favorites=favorites)
-    (out / "dashboard.json").write_text(json.dumps(data, ensure_ascii=False, separators=(",", ":")), encoding="utf-8")
+    # a função do painel na Vercel responde no máximo 4,5 MB: se o JSON passar de ~3 MB, guarda menos coletas por voo
+    for points in (db.SERIES_POINTS, 45, 20):
+        data = db.build_dashboard(conn, favorites=favorites, series_points=points)
+        text = json.dumps(data, ensure_ascii=False, separators=(",", ":"))
+        if len(text.encode("utf-8")) <= MAX_DASHBOARD_BYTES:
+            break
+    (out / "dashboard.json").write_text(text, encoding="utf-8")
     n_combos = sum(len(w["combos"]) for w in data["watches"])
     print(f"{out / 'dashboard.json'}: {len(data['watches'])} busca(s), {n_combos} combinação(ões) de datas, {len(data['favorites'])} favorito(s).")
     return 0
