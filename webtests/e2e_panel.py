@@ -378,7 +378,7 @@ try:
             route.fulfill(response=r, body=_json.dumps(d))
         pg.route("**/api/dashboard", partial_fail); pg.reload(); pg.wait_for_selector(".tcard")
         c3 = pg.locator('.tcard[data-open-trip="3"]'); assert c3.locator(".tcard-fail").count() == 0, "parcial: sem caixa de aviso no cartão"
-        assert "2 de 22 falharam" in c3.inner_text() and "página de erro passageira" in c3.locator(".chip.warn").first.get_attribute("title")
+        assert "20 de 22 com sucesso" in c3.inner_text() and "página de erro passageira" in c3.locator(".chip.warn").first.get_attribute("title")
         assert pg.locator('.tcard[data-open-trip="4"] .tcard-fail').count() == 1, "falha total: a causa continua no cartão"
         pg.unroute("**/api/dashboard", partial_fail)
         print("12j. cartão: falha parcial só com o selo (causa no balão); falha total mantém a causa")
