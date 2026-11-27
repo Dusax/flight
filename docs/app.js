@@ -154,6 +154,8 @@ const ptBag = (s) => s.replace(/^(\d+) free carry-on$/, "$1 bagagem de mão grá
   .replace(/^1st checked bag available for a fee$/, "1ª despachada paga").replace(/^1st checked bag: (.+)$/, "1ª despachada: $1")
   .replace(/^1st checked bag is free$/i, "1ª despachada grátis");
 const googleUrl = (u) => (typeof u === "string" && /^https:\/\/www\.google\.com\//.test(u) ? u : null); // só links do Google
+// Link "Ver passagem" montado no navegador (docs/flightlink.js). Sem o módulo o painel segue igual (só o link da tela de compra lida).
+const buyOf = (w, c, o) => { try { const r = window.FlightLink ? window.FlightLink.flightLink(w, c, o) : null; return r && googleUrl(r.url) ? r : null; } catch { return null; } };
 // compatível com dashboard.json antigo (sem `legs` nas combinações)
 const firstLeg = (w, c) => (c.legs && c.legs[0]) || { origin: w.origin, destination: w.destination };
 /* faixa de preço típica da rota: a da tela de compra (se houver) ou a do painel de preços do Google, que vem em toda busca só ida / ida e volta */
@@ -506,12 +508,12 @@ function paneVoos(w, c) {
       <label>Companhia <select data-flt="airline"><option value="">Todas</option>${airlines.map((a) => `<option ${f.airline === a ? "selected" : ""}>${esc(a)}</option>`).join("")}</select></label>
       <label><input type="checkbox" data-flt="direct" ${f.direct ? "checked" : ""}> Só diretos</label>
       <span class="spacer"></span><span class="muted small">${list.length} voo${list.length === 1 ? "" : "s"} listado${list.length === 1 ? "" : "s"}${c.offers_count > all.length ? ` · ${c.offers_count} encontrados no total` : ""}</span></div>
-    <div class="flights">${shown.length ? shown.map((o, i) => flightRow(w, o, { cheapest: o.price === cheapest, fastest: o.duration_min === fastest, key: `${w.id}-${c.depart_date}-${o.flight_numbers}-${o.dep_time}`, favId: canWrite() ? registerFav(w, c, o) : null,
+    <div class="flights">${shown.length ? shown.map((o, i) => flightRow(w, o, { cheapest: o.price === cheapest, fastest: o.duration_min === fastest, key: `${w.id}-${c.depart_date}-${o.flight_numbers}-${o.dep_time}`, favId: canWrite() ? registerFav(w, c, o) : null, buy: buyOf(w, c, o),
       trackId: window.Series && c.series?.f?.[window.Series.flightKey(o)] ? `${comboIndex(w)}|${window.Series.flightKey(o)}` : null })).join("") : `<div class="panel empty"><p class="muted">Nenhum voo com esses filtros.</p></div>`}</div>
     ${list.length > f.limit ? `<button class="btn more-btn" data-more="${w.id}">Mostrar mais ${Math.min(12, list.length - f.limit)} voos</button>` : ""}`;
 }
 
-function flightRow(w, o, { cheapest, fastest, key, favId, trackId }) {
+function flightRow(w, o, { cheapest, fastest, key, favId, trackId, buy }) {
   const next = dayDiff(o.dep_time, o.arr_time);
   const badges = [];
   if (cheapest) badges.push(`<span class="chip good">${icon("tag")}Mais barato</span>`);
@@ -522,7 +524,8 @@ function flightRow(w, o, { cheapest, fastest, key, favId, trackId }) {
   if (o.cabin) badges.push(`<span class="chip">${esc(o.cabin)}</span>`);
   if (o.co2_kg != null && o.co2_diff_pct) badges.push(`<span class="chip ${o.co2_diff_pct < 0 ? "good" : ""}">CO₂ ${o.co2_diff_pct > 0 ? "+" : ""}${o.co2_diff_pct}%</span>`);
   if (o.booking?.bags?.length) badges.push(`<span class="chip">${icon("bag")}${esc(ptBag(o.booking.bags[0]))}</span>`);
-  const detail = flightDetail(w, o);
+  const detail = flightDetail(w, o, buy);
+  const buyBtn = buy ? `<a class="btn sm primary buy" href="${esc(buy.url)}" target="_blank" rel="noopener noreferrer" title="${buy.exact ? "Abre a tela de compra do Google Voos com este voo selecionado" : "Abre a busca desta data no Google Voos (não deu para selecionar este voo)"}">${icon("ext")}${buy.exact ? "Ver passagem" : "Abrir busca"}</a>` : "";
   return `<article class="panel fl"><div class="fl-main">
     <div class="fl-air">${avatar(o.airline)}<div><b>${esc(o.airline)}</b><span>${esc(o.flight_numbers || "")}${o.operated_by && o.operated_by !== o.airline ? ` · op. ${esc(o.operated_by)}` : ""}</span></div></div>
     <div class="fl-times"><div><div class="fl-t num">${fmtTime(o.dep_time)}</div><div class="fl-c">${esc(o.origin)}</div></div>
@@ -530,10 +533,10 @@ function flightRow(w, o, { cheapest, fastest, key, favId, trackId }) {
       <div class="ta-r"><div class="fl-t num">${fmtTime(o.arr_time)}${next > 0 ? `<span class="nextday">+${next}</span>` : ""}</div><div class="fl-c">${esc(o.destination)}</div></div></div>
     <div class="fl-price"><div class="price num${bigCls(money(o.price, w.currency))}">${money(o.price, w.currency)}</div>${w.adults > 1 ? `<div class="muted small">${money(o.price / w.adults, w.currency)} por adulto</div>` : ""}</div>
   </div>
-  <div class="fl-badges">${badges.join("")}<span class="fl-actions">${trackId ? `<button type="button" class="btn sm ghost" data-track="${esc(trackId)}" title="Ver a evolução do preço deste voo">${icon("chart")}Acompanhar</button>` : ""}${favId ? starBtn(favId) : ""}</span></div>${detail ? `<details data-k="${esc(key)}"><summary>${icon("chev")}Detalhes do voo</summary><div class="fl-detail">${detail}</div></details>` : ""}</article>`;
+  <div class="fl-badges">${badges.join("")}<span class="fl-actions">${buyBtn}${trackId ? `<button type="button" class="btn sm ghost" data-track="${esc(trackId)}" title="Ver a evolução do preço deste voo">${icon("chart")}Acompanhar</button>` : ""}${favId ? starBtn(favId) : ""}</span></div>${detail ? `<details data-k="${esc(key)}"><summary>${icon("chev")}Detalhes do voo</summary><div class="fl-detail">${detail}</div></details>` : ""}</article>`;
 }
 
-function flightDetail(w, o) {
+function flightDetail(w, o, buy) {
   const pt = (p) => (p ? `${esc(p.code)} ${esc(p.time)}${p.plus_days ? ` (+${p.plus_days})` : ""}` : "");
   const segs = (o.segments || []).map((s) => {
     const pills = [s.aircraft, s.cabin, s.legroom_in ? `assento ${LEG[s.legroom] || s.legroom} · ${s.legroom_in} pol` : null,
@@ -555,7 +558,9 @@ function flightDetail(w, o) {
       ${b.typical_low != null ? `<div class="bk-row">${icon("down")}<b>Faixa típica</b> ${money(b.typical_low, w.currency)}–${money(b.typical_high, w.currency)}${b.verdict ? ` · este voo está ${esc(VERDICT[b.verdict] || b.verdict)}` : ""}</div>` : ""}
       ${b.bag_policy ? `<div class="bk-row muted small">${esc(b.bag_policy)}</div>` : ""}${age}${link ? `<div class="bk-row">${link}</div>` : ""}</div>`;
   }
-  return segs + bk;
+  // se a tela de compra montada não abrir, a busca da data é o caminho garantido (mesma URL que o coletor usa)
+  const alt = buy && buy.exact && buy.search && googleUrl(buy.search) ? `<div class="bk bk-alt"><div class="bk-row muted small">Se a tela de compra não abrir: <a href="${esc(buy.search)}" target="_blank" rel="noopener noreferrer">${icon("ext")}abrir a busca desta data no Google Voos</a></div></div>` : "";
+  return segs + bk + alt;
 }
 
 /* ---- voos acompanhados: evolução do preço de um voo específico ---- */
@@ -606,7 +611,7 @@ function paneAcompanhar(w) {
     <div class="trk-sel">${dateSel}
       <label class="f">Buscar voo<input type="search" data-track-q value="${esc(tr.q || "")}" placeholder="Número ou companhia (ex.: LA 8084)" autocomplete="off"></label>
       <label class="f trk-pick">Voo<select data-track-flight>${opts}</select></label></div>
-    ${flightRow(w, o, { key: `trk-${key}`, favId: canWrite() ? registerFav(w, c, o) : null })}
+    ${flightRow(w, o, { key: `trk-${key}`, favId: canWrite() ? registerFav(w, c, o) : null, buy: buyOf(w, c, o) })}
     ${gone}${stats}
     <section class="panel panel-pad"><div class="trk-legend"><span><i class="lg lg-line"></i>Preço deste voo</span><span><i class="lg lg-min"></i>Menor preço da data</span><span><i class="lg lg-gap"></i>Não apareceu na coleta</span></div>
       <div class="chart-box" id="trk-chart"></div></section>
@@ -737,7 +742,7 @@ function paneComparar(w, c) {
   else if (sp.vs_trip > 0.5) { verdict = `O pacote sai <span class="down">${money(sp.vs_trip, w.currency)} mais barato</span> que comprar separado.`; kind = "ok"; }
   else verdict = "Pacote e separado custam o mesmo.";
   const legs = sp.legs.map((l, i) => `<div class="section-title">Trecho ${i + 1}: ${esc(l.origin)} → ${esc(l.destination)} · ${esc(fmtDay(l.date))} <span class="count">só ida</span></div>
-    <div class="flights">${l.offers.length ? l.offers.slice(0, 5).map((o) => flightRow(w, o, { cheapest: o.price === l.min_price, fastest: o.duration_min === l.fastest_min, key: `${w.id}-L${i}-${o.flight_numbers}-${o.dep_time}` })).join("") : `<p class="muted">Sem coleta deste trecho ainda.</p>`}</div>`).join("");
+    <div class="flights">${l.offers.length ? l.offers.slice(0, 5).map((o) => flightRow(w, o, { cheapest: o.price === l.min_price, fastest: o.duration_min === l.fastest_min, key: `${w.id}-L${i}-${o.flight_numbers}-${o.dep_time}`, buy: buyOf({ origin: l.origin, destination: l.destination, adults: w.adults, cabin: w.cabin, currency: w.currency, max_stops: w.max_stops }, { depart_date: l.date }, o) })).join("") : `<p class="muted">Sem coleta deste trecho ainda.</p>`}</div>`).join("");
   return `<section class="panel best stack"><div class="price-k">Pacote (${isMulti(w) ? "multi-destino" : "ida e volta"}) × trechos comprados separado</div><div class="verdict">${verdict}</div>
       <div class="row"><div><div class="price-k">Pacote</div><div class="price num${bigCls(money(c.min_price, w.currency))}">${money(c.min_price, w.currency)}</div></div><div><div class="price-k">Soma dos trechos</div><div class="price num${bigCls(money(sp.total, w.currency))}">${money(sp.total, w.currency)}</div></div></div>
       <p class="muted small nomargin">Passagens separadas não têm proteção se um voo atrasar e você perder o seguinte, e a bagagem precisa ser despachada de novo em cada conexão.</p></section>
@@ -798,7 +803,7 @@ const OFFER_KEEP = ["airline", "operated_by", "flight_numbers", "origin", "desti
 function buildFav({ w, c, o }) {
   const offer = {}; for (const k of OFFER_KEEP) offer[k] = o[k] ?? null; offer.airline = o.airline || "";
   return { id: favIdOf(w, c, o), watch_id: w.id, saved_at: new Date().toISOString(), price: o.price, currency: w.currency || "BRL", dates: comboDates(c),
-    trip: { origin: w.origin, destination: w.destination, legs: isMulti(w) ? w.legs.map((l) => ({ origin: l.origin, destination: l.destination })) : null, adults: w.adults || 1 }, offer };
+    trip: { origin: w.origin, destination: w.destination, legs: isMulti(w) ? w.legs.map((l) => ({ origin: l.origin, destination: l.destination })) : null, adults: w.adults || 1, cabin: w.cabin || "economy" }, offer };
 }
 async function toggleFav(id) {
   const cur = state.favs.find((f) => f.id === id);
@@ -827,13 +832,19 @@ function favInfo(f, ws) {
   const seen = live ? !!live.o : srv ? srv.seen_latest : null;           // null = ainda sem coleta depois de salvar
   const searchedAt = live?.c.scraped_at || srv?.searched_at || null;
   const lastSeen = live?.o ? live.c.scraped_at : srv?.last_seen_at || null;
-  return { w, current, seen, searchedAt, lastSeen, history: srv?.history || [], combo: live?.c || null };
+  return { w, current, seen, searchedAt, lastSeen, history: srv?.history || [], combo: live?.c || null, offer: live?.o || null };
 }
 const favDatesText = (f) => {
   if (f.trip.legs) return f.trip.legs.map((l, i) => `${l.origin}→${l.destination} ${fmtDayShort(f.dates[i])}`).join(" · ");
   return f.dates.length > 1 ? `Ida ${fmtDayShort(f.dates[0])} · Volta ${fmtDayShort(f.dates[1])}` : `Ida ${fmtDayShort(f.dates[0])}`;
 };
 const FAV_SORTS = { recent: "Mais recentes", price: "Menor preço", date: "Data da viagem" };
+// Link do favorito: usa a viagem e o voo da última coleta quando existem (têm os segmentos); senão o que foi salvo com a estrela.
+function favBuy(f, i, o) {
+  const w = i.w || { origin: f.trip.origin, destination: f.trip.destination, legs: f.trip.legs, adults: f.trip.adults, cabin: f.trip.cabin, currency: f.currency };
+  const c = i.combo || (f.trip.legs ? { legs: f.trip.legs.map((l, k) => ({ ...l, date: f.dates[k] })) } : { depart_date: f.dates[0], return_date: f.dates[1] || null });
+  return buyOf(w, c, i.offer || o);
+}
 function favCard(f, ws) {
   const i = favInfo(f, ws), cur = f.currency, trip = { origin: f.trip.origin, destination: f.trip.destination, legs: f.trip.legs };
   const price = i.current ?? f.price, past = f.dates[0] < todayIso();
@@ -853,7 +864,7 @@ function favCard(f, ws) {
       <div class="fav-acts">${i.w && window.Series && i.combo?.series?.f?.[window.Series.flightKey(f.offer)] ? `<button class="btn sm" data-favtrack="${esc(f.id)}">${icon("chart")}Evolução</button>` : ""}${i.w ? `<button class="btn sm" data-favopen="${esc(f.id)}">Ver na viagem${icon("chev")}</button>` : ""}</div>
       <div class="chips fav-chips">${chips.join("")}</div>
       <div class="fav-price"><span class="muted small">Preço quando salvou${pkg}:</span> <b class="num">${money(f.price, cur)}</b>${delta ? ` <span class="price-d">${delta}</span>` : ""}</div></div>
-    ${flightRow({ currency: cur, adults: f.trip.adults }, o, { key: `fav-${f.id}`, favId: f.id })}</section>`;
+    ${flightRow({ currency: cur, adults: f.trip.adults }, o, { key: `fav-${f.id}`, favId: f.id, buy: favBuy(f, i, o) })}</section>`;
 }
 function renderFavs(ws) {
   const sorted = [...state.favs];

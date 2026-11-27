@@ -72,6 +72,16 @@ frequência de cada uma pelo próprio painel e pode disparar uma coleta na hora.
   a faixa em que costumam ficar os voos mais baratos da rota (ex.: R$ 3.700–4.600) e o nível (baixo/normal/alto). Aparece
   no cartão da viagem, no Resumo e no topo da aba Voos, com a posição do preço atual na faixa. A tela de compra (só ida,
   voos mais baratos) continua trazendo a sua própria faixa, que tem prioridade. Multi-destino não tem: o Google não mostra.
+- **Ver passagem:** todo voo (abas Voos, Voos acompanhados, Favoritos e Comparação) tem o botão **Ver passagem**, que abre
+  no Google Voos a tela de compra daquele voo já selecionado, onde você escolhe o vendedor (companhia ou agência). O link é
+  montado no navegador (`docs/flightlink.js`) a partir do número, trecho e data de cada segmento do voo, sem nova coleta e
+  sem passar por servidor nosso: a URL é a da busca (`tfs`) com os segmentos escolhidos, como o Google mesmo gera (conferido
+  contra 42 URLs reais de compra: o conteúdo é idêntico, exceto o código de cidade como RIO, que o Google troca por um id
+  interno; no voo escolhido usamos o aeroporto real, ex. GIG). Em **ida e volta** abre com a ida escolhida e o Google pede a
+  volta. Quando não dá para saber o dia de cada conexão (sem o detalhe do voo e virando o dia) e em **multi-destino** o
+  botão vira **Abrir busca** e leva à busca daquelas datas. Dentro de “Detalhes do voo” há também o link da busca como plano
+  B. Não existe link direto para o checkout da companhia: esses endereços são redirecionamentos de sessão do Google. O link
+  da tela de compra lida pelo coletor (só ida, `booking_top`) continua tendo prioridade quando existe.
 - **Consulta pontual:** o botão **Consulta pontual** (raio, no topo) busca uma vez, na hora, sem cadastrar para repetir.
   Usa o mesmo formulário (ida, ida e volta, multi-destino, períodos de datas), mas sem nome nem frequência. Dispara a
   coleta e o resultado (1 a 5 min) fica na seção **Consultas pontuais** da lista, fora dos indicadores. Nunca entra no

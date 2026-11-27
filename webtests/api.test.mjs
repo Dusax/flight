@@ -324,6 +324,12 @@ test("favoritos: dados inválidos são recusados", async () => {
   assert.equal((await call("/api/favorites", { method: "PUT", body: { list: Array.from({ length: 201 }, (_, i) => fav({ id: `f${i}` })) }, cookie })).status, 400);
   const ok = await call("/api/favorites", { method: "PUT", body: { list: [fav({ trip: { origin: "GRU", destination: "LIS", adults: 1, legs: [{ origin: "GRU", destination: "ROM" }, { origin: "ROM", destination: "LIS" }] }, dates: ["2027-02-10", "2027-02-15"] })] }, cookie });
   assert.equal(ok.status, 200, ok.text);
+  // classe da viagem (para o link "Ver passagem"): aceita as conhecidas, recusa o resto
+  const withCabin = await call("/api/favorites", { method: "PUT", body: { sha: ok.json.sha, list: [fav({ trip: { origin: "GRU", destination: "LIS", adults: 2, cabin: "business", legs: null } })] }, cookie });
+  assert.equal(withCabin.status, 200, withCabin.text);
+  assert.equal(JSON.parse(gh.files.get("favorites.json").content)[0].trip.cabin, "business");
+  const badCabin = await call("/api/favorites", { method: "PUT", body: { sha: withCabin.json.sha, list: [fav({ trip: { origin: "GRU", destination: "LIS", adults: 1, cabin: "vip", legs: null } })] }, cookie });
+  assert.equal(badCabin.status, 400);
 });
 
 test("normalizeWatch: consulta pontual (once) nunca é agendada", () => {

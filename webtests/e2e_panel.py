@@ -397,6 +397,25 @@ try:
         pg2.close()
         print("12k. sem series.js: Voos e Favoritos continuam funcionando, sem os botões de acompanhamento")
 
+        # botão "Ver passagem": em todo voo, abre o Google Voos em outra aba; multi-destino cai na busca
+        for vid, kind in ((3, "booking"), (2, "booking"), (1, "search")):
+            pg.goto(base + f"/#/viagem/{vid}/voos"); pg.wait_for_selector(".fl")
+            n_fl, n_buy = pg.locator(".fl").count(), pg.locator(".fl a.buy").count()
+            assert n_fl == n_buy > 0, (vid, n_fl, n_buy)
+            a = pg.locator(".fl a.buy").first
+            href = a.get_attribute("href")
+            assert a.get_attribute("target") == "_blank" and "noopener" in a.get_attribute("rel"), "abre em outra aba, sem vazar o painel"
+            if kind == "booking":
+                assert href.startswith("https://www.google.com/travel/flights/booking?"), href
+                assert "Ver passagem" in a.inner_text()
+            else:
+                assert href.startswith("https://www.google.com/travel/flights?"), href
+                assert "Abrir busca" in a.inner_text()
+        pg.goto(base + "/#/viagem/3/voos"); pg.wait_for_selector(".fl a.buy")
+        pg.locator(".fl details summary").first.click()
+        assert "abrir a busca desta data" in pg.locator(".fl details").first.inner_text().lower(), "plano B dentro dos detalhes"
+        print("12l. botão Ver passagem em todo voo (tela de compra; multi-destino abre a busca) + plano B nos detalhes")
+
         pg.goto(base + "/#/viagem/1/voos"); pg.wait_for_selector(".fl"); assert not pg.is_visible("#dlg-login")
         print("13. link direto + sessão mantida após recarregar")
         ctx.clear_cookies(); pg.click('[data-nav="/"]'); pg.click('.tcard [data-act=run]')
@@ -414,6 +433,7 @@ try:
         for h in ("#/", "#/viagem/1/resumo", "#/viagem/3/voos", "#/viagem/2/comparar"):
             mp.evaluate(f"location.hash = '{h}'"); mp.wait_for_timeout(250)
             assert not mp.evaluate("document.documentElement.scrollWidth > window.innerWidth + 1"), f"rolagem lateral em {h}"
+            assert mp.evaluate("[...document.querySelectorAll('.fl')].every((c) => { const r = c.getBoundingClientRect(); return [...c.querySelectorAll('a.buy, .star')].every((x) => { const q = x.getBoundingClientRect(); return q.left >= r.left - 1 && q.right <= r.right + 1; }); })"), f"botões dentro do cartão em {h}"
         mp.click("#btn-new"); mp.check("#form-watch [name=trip][value=multi]")
         mp.locator("#legs .leg-row").nth(0).locator(".leg-o").press_sequentially("new yo", delay=15); mp.wait_for_selector("#legs .ac-list:not([hidden]) li[data-i]")
         assert not mp.evaluate("(() => { const d = document.querySelector('#dlg-watch'); return d.scrollWidth > d.clientWidth + 1; })()"), "o formulário não pode rolar para o lado"

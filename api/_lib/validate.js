@@ -178,6 +178,7 @@ export function normalizeFavorite(f) {
     out.trip.legs = t.legs.map((l, i) => ({ origin: code(l?.origin, `trecho ${i + 1}`), destination: code(l?.destination, `trecho ${i + 1}`) }));
   }
   if (t.adults != null) { if (!int(t.adults, 1, 9)) throw new Error("adultos inválido"); out.trip.adults = t.adults; }
+  if (t.cabin != null) { if (!CABINS.has(t.cabin)) throw new Error("classe inválida"); out.trip.cabin = t.cabin; }   // para montar o link "Ver passagem"
   const o = f.offer;
   if (!o || typeof o !== "object") throw new Error("voo inválido");
   out.offer = {
